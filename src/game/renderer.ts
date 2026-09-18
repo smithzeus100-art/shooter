@@ -18,15 +18,20 @@ export class GameRenderer {
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
 
-    // Screen Shake Offset
+    // Screen Shake Offset (Tamed micro-rumble)
     if (engine.screenShakeAmount > 0) {
-      const shakeX = (Math.random() - 0.5) * engine.screenShakeAmount * 2;
-      const shakeY = (Math.random() - 0.5) * engine.screenShakeAmount * 2;
+      const clampedShake = Math.min(engine.screenShakeAmount, 2.0);
+      const shakeX = (Math.random() - 0.5) * clampedShake;
+      const shakeY = (Math.random() - 0.5) * clampedShake;
       ctx.translate(shakeX, shakeY);
     }
 
-    // 1. Draw Starfield & Cosmic Dust
+    // 1. Draw Starfield & Cosmic Dust with camera parallax
     this.drawBackground(ctx, engine);
+
+    // Dynamic Camera: Center viewport on continuous camera position
+    ctx.save();
+    ctx.translate(CANVAS_WIDTH / 2 - engine.camera.x, CANVAS_HEIGHT / 2 - engine.camera.y);
 
     // 2. Draw Tractor Beam Aura
     this.drawTractorField(ctx, engine);
@@ -34,125 +39,113 @@ export class GameRenderer {
     // 3. Draw Drops (XP & Repair Pickups)
     this.drawDrops(ctx, engine);
 
-    // 4. Draw Formation Links between Flagship and Drones
-    this.drawDroneFormationLinks(ctx, engine);
+    // 4. Draw Escort Wingman Ion Thruster Trails (No tethers)
+    this.drawDroneThrusterTrails(ctx, engine);
 
-    // 5. Draw Enemies
+    // 5. Draw Dynamic Energy Synergy Links
+    this.drawSynergyLinks(ctx, engine);
+
+    // 6. Draw Enemies
     this.drawEnemies(ctx, engine);
 
-    // 6. Draw HUD Tactical Target Locks & Aim Beams
+    // 7. Draw HUD Tactical Target Locks & Aim Beams
     this.drawTargetingHUD(ctx, engine);
 
-    // 7. Draw Escort Drones
+    // 8. Draw Escort Drones
     this.drawDrones(ctx, engine);
 
-    // 8. Draw Player Flagship
+    // 9. Draw Player Flagship
     this.drawPlayer(ctx, engine.player);
 
-    // 9. Draw Ionization Beams & Lightning Arcs
+    // 10. Draw Ionization Beams & Lightning Arcs
     this.drawIonizationBeams(ctx, engine);
     this.drawLightningArcs(ctx, engine);
 
-    // 10. Draw Projectiles & Missiles
+    // 11. Draw Projectiles & Missiles
     this.drawProjectiles(ctx, engine);
 
-    // 9. Draw Particles & Explosions
+    // 12. Draw Particles & Explosions
     this.drawParticles(ctx, engine);
 
-    // 10. Draw Shockwaves
+    // 13. Draw Shockwaves
     this.drawShockwaves(ctx, engine);
 
-    // 11. Draw Floating Combat Text
+    // 14. Draw Floating Combat Text
     this.drawFloatingTexts(ctx, engine);
 
-    // 12. Draw Boss Health Bar Overlay (if Titan active)
+    ctx.restore(); // End dynamic camera transform
+
+    // 15. Draw Boss Health Bar Overlay (if Titan active) in screen space
     this.drawBossOverlay(ctx, engine);
 
     ctx.restore();
   }
 
   private drawBackground(ctx: CanvasRenderingContext2D, engine: GameEngine) {
-    // 1. Deep space background vignette
+    const camX = engine.camera.x;
+    const camY = engine.camera.y;
+    const p = engine.player;
+    const shipSpeed = p ? Math.hypot(p.vx, p.vy) : 0;
+    const moveAngle = p && shipSpeed > 0.5 ? Math.atan2(p.vy, p.vx) : 0;
+
+    ctx.save();
+
+    // 1. Deep Cosmic Nebulae Layer (Ultra-low opacity, deep 0.025x parallax)
+    for (const neb of engine.nebulae) {
+      const nx = ((neb.x - camX * 0.025) % CANVAS_WIDTH + CANVAS_WIDTH) % CANVAS_WIDTH;
+      const ny = ((neb.y - camY * 0.025) % CANVAS_HEIGHT + CANVAS_HEIGHT) % CANVAS_HEIGHT;
+
+      const nebGrad = ctx.createRadialGradient(nx, ny, 0, nx, ny, neb.radius);
+      nebGrad.addColorStop(0, neb.color);
+      nebGrad.addColorStop(0.5, neb.color.replace(/[\d\.]+\)$/, '0.015)'));
+      nebGrad.addColorStop(1, 'rgba(3, 7, 18, 0)');
+
+      ctx.fillStyle = nebGrad;
+      ctx.beginPath();
+      ctx.arc(nx, ny, neb.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 2. Multi-tier Parallax Starfield (Layer 1: 0.04x, Layer 2: 0.10x, Layer 3: 0.20x)
+    for (const star of engine.stars) {
+      const factor = star.layer === 1 ? 0.04 : star.layer === 2 ? 0.1 : 0.2;
+      const sx = ((star.x - camX * factor) % CANVAS_WIDTH + CANVAS_WIDTH) % CANVAS_WIDTH;
+      const sy = ((star.y - camY * factor) % CANVAS_HEIGHT + CANVAS_HEIGHT) % CANVAS_HEIGHT;
+
+      const twinkle = 0.55 + 0.45 * Math.sin(star.twinklePhase);
+      const alpha = star.brightness * twinkle * (star.layer === 1 ? 0.4 : star.layer === 2 ? 0.65 : 0.85);
+
+      if (star.layer === 3 && shipSpeed > 3.0) {
+        // Subtle velocity streak on foreground dust particles
+        const streakLen = Math.min(6.0, shipSpeed * 0.7);
+        ctx.strokeStyle = `rgba(226, 232, 240, ${(alpha * 0.7).toFixed(2)})`;
+        ctx.lineWidth = star.size * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx - Math.cos(moveAngle) * streakLen, sy - Math.sin(moveAngle) * streakLen);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = `rgba(226, 232, 240, ${alpha.toFixed(2)})`;
+        ctx.fillRect(sx, sy, star.size, star.size);
+      }
+    }
+
+    // 3. Subtle Edge Vignette to frame playfield
     const grad = ctx.createRadialGradient(
       CANVAS_WIDTH / 2,
       CANVAS_HEIGHT / 2,
-      120,
+      CANVAS_WIDTH * 0.35,
       CANVAS_WIDTH / 2,
       CANVAS_HEIGHT / 2,
-      CANVAS_WIDTH * 0.8
+      CANVAS_WIDTH * 0.75
     );
-    grad.addColorStop(0, '#090d16');
-    grad.addColorStop(0.6, '#040711');
-    grad.addColorStop(1, '#02040a');
+    grad.addColorStop(0, 'rgba(3, 7, 18, 0)');
+    grad.addColorStop(0.7, 'rgba(3, 7, 18, 0.3)');
+    grad.addColorStop(1, 'rgba(3, 7, 18, 0.85)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // 2. Cosmic Nebulae
-    for (const neb of engine.nebulae) {
-      ctx.save();
-      const nebGrad = ctx.createRadialGradient(neb.x, neb.y, 0, neb.x, neb.y, neb.radius);
-      nebGrad.addColorStop(0, neb.color);
-      nebGrad.addColorStop(0.7, neb.color.replace(/[\d.]+\)$/, '0.015)'));
-      nebGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = nebGrad;
-      ctx.beginPath();
-      ctx.arc(neb.x, neb.y, neb.radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    // 3. Multi-layer Parallax Stars & Velocity Warp Streaks
-    const p = engine.player;
-    const pVx = p ? p.vx : 0;
-    const pVy = p ? p.vy : 0;
-    const speed = Math.hypot(pVx, pVy);
-    const isHighSpeed = speed > 2.0;
-
-    for (const star of engine.stars) {
-      // Calculate twinkling brightness modulation
-      const twinkle = Math.sin(star.twinklePhase) * 0.25;
-      const currentAlpha = Math.max(0.15, Math.min(1.0, star.brightness + twinkle));
-
-      // Foreground layer 3 velocity motion streaks
-      if (star.layer === 3 && isHighSpeed) {
-        const streakMultiplier = (p.isDashing ? 2.8 : 1.4) * (star.layer * 0.7);
-        const tailX = star.x - pVx * streakMultiplier;
-        const tailY = star.y - pVy * streakMultiplier;
-
-        ctx.save();
-        ctx.strokeStyle = star.color;
-        ctx.globalAlpha = currentAlpha;
-        ctx.lineWidth = star.size * 0.8;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(star.x, star.y);
-        ctx.lineTo(tailX, tailY);
-        ctx.stroke();
-
-        // Bright star head
-        ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.size * 0.6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      } else {
-        // Crisp stellar body
-        ctx.save();
-        ctx.globalAlpha = currentAlpha;
-        ctx.fillStyle = star.color;
-
-        // Subtle bloom for larger midfield/foreground stars
-        if (star.size > 2.0) {
-          ctx.shadowColor = star.color;
-          ctx.shadowBlur = 4;
-        }
-
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
+    ctx.restore();
   }
 
   private drawTractorField(ctx: CanvasRenderingContext2D, engine: GameEngine) {
@@ -166,23 +159,45 @@ export class GameRenderer {
     ctx.restore();
   }
 
-  private drawDroneFormationLinks(ctx: CanvasRenderingContext2D, engine: GameEngine) {
+  private drawDroneThrusterTrails(ctx: CanvasRenderingContext2D, engine: GameEngine) {
     const p = engine.player;
-    ctx.save();
-    ctx.setLineDash([4, 4]);
+    if (p.drones.length === 0) return;
 
+    ctx.save();
     for (const drone of p.drones) {
-      const dist = Math.hypot(drone.x - p.x, drone.y - p.y);
-      if (dist < 400) {
-        ctx.strokeStyle = `${drone.color}22`; // Subtle transparent tether
-        ctx.lineWidth = 1.5;
+      if (!drone.trail || drone.trail.length < 2) continue;
+
+      // Draw fading dual ion trail stream
+      ctx.lineWidth = 2.0;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      for (let i = 0; i < drone.trail.length - 1; i++) {
+        const pt1 = drone.trail[i];
+        const pt2 = drone.trail[i + 1];
+        if (pt1.alpha <= 0.01) continue;
+
+        ctx.strokeStyle = drone.color;
+        ctx.globalAlpha = pt1.alpha * 0.45;
+        ctx.lineWidth = Math.max(0.8, 2.5 * (1 - i / drone.trail.length));
+
         ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(drone.x, drone.y);
+        ctx.moveTo(pt1.x, pt1.y);
+        ctx.lineTo(pt2.x, pt2.y);
         ctx.stroke();
+
+        // Inner white-hot filament for active afterburners
+        if (drone.afterburner && drone.afterburner > 0.3) {
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.globalAlpha = pt1.alpha * 0.6 * drone.afterburner;
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(pt1.x, pt1.y);
+          ctx.lineTo(pt2.x, pt2.y);
+          ctx.stroke();
+        }
       }
     }
-
     ctx.restore();
   }
 
@@ -339,6 +354,59 @@ export class GameRenderer {
     }
   }
 
+  private drawSynergyLinks(ctx: CanvasRenderingContext2D, engine: GameEngine) {
+    if (!engine.synergyLinks || engine.synergyLinks.length === 0) return;
+
+    ctx.save();
+    const now = Date.now() * 0.005;
+
+    for (const link of engine.synergyLinks) {
+      const isNexus = link.sourceId === 'player';
+      const pulse = 0.5 + 0.5 * Math.sin(link.pulsePhase + now);
+
+      // Gradient energy beam
+      const grad = ctx.createLinearGradient(link.x1, link.y1, link.x2, link.y2);
+      if (isNexus) {
+        grad.addColorStop(0, `rgba(0, 240, 255, ${link.alpha * 0.7})`);
+        grad.addColorStop(1, `${link.color}${Math.floor(link.alpha * 255).toString(16).padStart(2, '0')}`);
+      } else {
+        grad.addColorStop(0, `${link.color}${Math.floor(link.alpha * 200).toString(16).padStart(2, '0')}`);
+        grad.addColorStop(1, `${link.color}${Math.floor(link.alpha * 255).toString(16).padStart(2, '0')}`);
+      }
+
+      // Outer glow beam
+      ctx.beginPath();
+      ctx.moveTo(link.x1, link.y1);
+      ctx.lineTo(link.x2, link.y2);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = isNexus ? 1.8 + pulse * 1.2 : 1.2 + pulse * 0.8;
+      ctx.stroke();
+
+      // Inner high-luminance core filament
+      ctx.beginPath();
+      ctx.moveTo(link.x1, link.y1);
+      ctx.lineTo(link.x2, link.y2);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${link.alpha * 0.85})`;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+
+      // Traveling photonic nodes along the link
+      const nodeCount = isNexus ? 2 : 1;
+      for (let n = 0; n < nodeCount; n++) {
+        const offset = (now * 0.4 + n / nodeCount) % 1;
+        const nx = link.x1 + (link.x2 - link.x1) * offset;
+        const ny = link.y1 + (link.y2 - link.y1) * offset;
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(nx, ny, 1.2 + pulse * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
   private drawDrones(ctx: CanvasRenderingContext2D, engine: GameEngine) {
     for (const drone of engine.player.drones) {
       this.drawSingleDrone(ctx, drone);
@@ -349,6 +417,62 @@ export class GameRenderer {
     ctx.save();
     ctx.translate(drone.x, drone.y);
     ctx.rotate(drone.angle);
+
+    // Realistic Aerodynamic / Reaction-wheel Banking: compress lateral axis based on bank angle
+    const bankScaleY = Math.cos(drone.bankAngle || 0);
+    ctx.scale(1.0, Math.max(0.62, bankScaleY));
+
+    // 1. Dual Main Engine Ion Thruster Flares & Afterburners
+    const thrust = drone.thrusterPulse || 0;
+    const afterburn = drone.afterburner || 0;
+    if (thrust > 0.04 || afterburn > 0.05) {
+      ctx.save();
+      const flareLen = 5 + thrust * 12 + afterburn * 14;
+      const flareWidth = 2.5 + afterburn * 1.5;
+
+      // Twin rear nozzle exhaust flares (Port & Starboard engines)
+      const nozzleYOffsets = [-3.5, 3.5];
+      for (const ny of nozzleYOffsets) {
+        // Outer chromatic flame plume
+        ctx.fillStyle = drone.color;
+        ctx.globalAlpha = Math.min(0.85, (thrust * 0.7 + afterburn * 0.3) + 0.15);
+        ctx.beginPath();
+        ctx.moveTo(-8, ny - flareWidth);
+        ctx.lineTo(-8 - flareLen, ny);
+        ctx.lineTo(-8, ny + flareWidth);
+        ctx.closePath();
+        ctx.fill();
+
+        // High-temperature white-hot core
+        ctx.fillStyle = '#FFFFFF';
+        ctx.globalAlpha = Math.min(0.95, thrust * 0.9 + afterburn * 0.5);
+        ctx.beginPath();
+        ctx.moveTo(-8, ny - flareWidth * 0.45);
+        ctx.lineTo(-8 - flareLen * 0.55, ny);
+        ctx.lineTo(-8, ny + flareWidth * 0.45);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 2. Reaction Control System (RCS) Lateral Gas Plumes
+    const rcs = drone.rcsFlare || 0;
+    const bank = drone.bankAngle || 0;
+    if (rcs > 0.1 || Math.abs(bank) > 0.28) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(224, 242, 254, 0.85)';
+      const rcsLen = 3.5 + rcs * 6;
+      if (bank > 0.2 || rcs > 0.1) {
+        // Port RCS vent firing
+        ctx.fillRect(-2, -9 - rcsLen, 1.6, rcsLen);
+      }
+      if (bank < -0.2 || rcs > 0.1) {
+        // Starboard RCS vent firing
+        ctx.fillRect(-2, 9, 1.6, rcsLen);
+      }
+      ctx.restore();
+    }
 
     ctx.fillStyle = '#1E293B';
     ctx.strokeStyle = drone.color;
@@ -540,7 +664,53 @@ export class GameRenderer {
       ctx.fill();
     }
 
+    // Synergy Field Halo (rendered when actively linked)
+    if (drone.synergyBuff && drone.synergyBuff.activeLinks > 0) {
+      const synPulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.008);
+      ctx.strokeStyle = drone.color;
+      ctx.lineWidth = 1.0;
+      ctx.globalAlpha = 0.25 + 0.35 * synPulse;
+      ctx.beginPath();
+      ctx.arc(0, 0, 13 + synPulse * 2.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1.0;
+    }
+
+    // Hit flash overlay
+    if (drone.hitFlashTimer > 0) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.restore();
+
+    // World-space Health & Shield Pips (rendered only when damaged or shielded)
+    if (drone.health < drone.maxHealth || drone.shield < drone.maxShield) {
+      ctx.save();
+      const barW = 20;
+      const barH = 2.5;
+      const barX = drone.x - barW / 2;
+      const barY = drone.y - 18;
+
+      // Dark background tray
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 4);
+
+      // Hull Health Bar
+      const hpRatio = Math.max(0, drone.health / drone.maxHealth);
+      ctx.fillStyle = hpRatio > 0.5 ? '#10B981' : hpRatio > 0.25 ? '#F59E0B' : '#EF4444';
+      ctx.fillRect(barX, barY, barW * hpRatio, barH);
+
+      // Shield Bar Layer (slim cyan strip above health)
+      if (drone.maxShield > 0) {
+        const shieldRatio = Math.max(0, drone.shield / drone.maxShield);
+        ctx.fillStyle = '#38BDF8';
+        ctx.fillRect(barX, barY + barH + 0.5, barW * shieldRatio, 1.5);
+      }
+      ctx.restore();
+    }
   }
 
   private drawIonizationBeams(ctx: CanvasRenderingContext2D, engine: GameEngine) {
@@ -634,7 +804,106 @@ export class GameRenderer {
         ctx.restore();
       }
 
-      if (enemy.type === 'SWARMER') {
+      if (enemy.type === 'INTERCEPTOR') {
+        // High-g Swept Delta-Wing Interceptor
+        ctx.beginPath();
+        ctx.moveTo(18, 0);
+        ctx.lineTo(-8, 15);
+        ctx.lineTo(-14, 11);
+        ctx.lineTo(-6, 0);
+        ctx.lineTo(-14, -11);
+        ctx.lineTo(-8, -15);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Forward twin plasma needle emitters
+        ctx.fillStyle = enemy.color;
+        ctx.fillRect(8, -5, 6, 1.8);
+        ctx.fillRect(8, 3.2, 6, 1.8);
+
+        // Core power nexus
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(1, 0, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (enemy.type === 'SHIELD_BEARER') {
+        // Heavy Phalanx Vanguard Chassis
+        ctx.beginPath();
+        ctx.moveTo(14, -14);
+        ctx.lineTo(18, 0);
+        ctx.lineTo(14, 14);
+        ctx.lineTo(-12, 16);
+        ctx.lineTo(-18, 0);
+        ctx.lineTo(-12, -16);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Armored frontal blast plating
+        ctx.fillStyle = enemy.color;
+        ctx.beginPath();
+        ctx.moveTo(12, -10);
+        ctx.lineTo(16, 0);
+        ctx.lineTo(12, 10);
+        ctx.lineTo(8, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        // Exposed Rear Thermal Radiator Weakpoint (flank target indicator)
+        ctx.fillStyle = '#F97316';
+        ctx.beginPath();
+        ctx.arc(-10, 0, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.0;
+        ctx.stroke();
+
+        // Projected Frontal Energy Bulwark Barrier (140° forward arc)
+        if (enemy.frontalShieldActive !== false) {
+          ctx.save();
+          const shieldArc = enemy.frontalShieldArc || 2.4;
+          const isShieldHit = (enemy.frontalShieldFlash || 0) > 0;
+          const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.008);
+
+          // Bulwark energy wash
+          ctx.fillStyle = isShieldHit
+            ? 'rgba(255, 255, 255, 0.4)'
+            : `rgba(56, 189, 248, ${0.12 + pulse * 0.08})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, enemy.radius + 10, -shieldArc / 2, shieldArc / 2);
+          ctx.lineTo(0, 0);
+          ctx.closePath();
+          ctx.fill();
+
+          // Outer hardlight barrier arc
+          ctx.strokeStyle = isShieldHit ? '#FFFFFF' : `rgba(56, 189, 248, ${0.75 + pulse * 0.25})`;
+          ctx.lineWidth = isShieldHit ? 3.8 : 2.5;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.arc(0, 0, enemy.radius + 10, -shieldArc / 2, shieldArc / 2);
+          ctx.stroke();
+
+          // Shield generator emitter nodes at arc tips
+          const tip1X = Math.cos(-shieldArc / 2) * (enemy.radius + 10);
+          const tip1Y = Math.sin(-shieldArc / 2) * (enemy.radius + 10);
+          const tip2X = Math.cos(shieldArc / 2) * (enemy.radius + 10);
+          const tip2Y = Math.sin(shieldArc / 2) * (enemy.radius + 10);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.arc(tip1X, tip1Y, 2.2, 0, Math.PI * 2);
+          ctx.arc(tip2X, tip2Y, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          // Burnout spark on disabled emitter nodes
+          ctx.fillStyle = '#475569';
+          ctx.beginPath();
+          ctx.arc(10, -12, 1.8, 0, Math.PI * 2);
+          ctx.arc(10, 12, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (enemy.type === 'SWARMER') {
         // Razor Blade Triangle
         ctx.beginPath();
         ctx.moveTo(14, 0);
@@ -701,6 +970,43 @@ export class GameRenderer {
         ctx.fill();
       }
 
+      // Active Energy Shield Ring
+      if (enemy.shield && enemy.shield > 0) {
+        ctx.save();
+        const shieldAlpha = enemy.shieldFlashTimer && enemy.shieldFlashTimer > 0 ? 0.9 : 0.45;
+        ctx.strokeStyle = `rgba(56, 189, 248, ${shieldAlpha})`;
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.arc(0, 0, enemy.radius + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.restore();
+
+      // World-space tactical health & shield gauge above enemy hull
+      const barW = Math.max(22, enemy.radius * 1.5);
+      const barH = 3;
+      const barX = enemy.x - barW / 2;
+      const barY = enemy.y - enemy.radius - 12;
+
+      ctx.save();
+      // Background bar
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+
+      // HP Fill
+      const hpPct = Math.max(0, Math.min(1, enemy.hp / enemy.maxHp));
+      ctx.fillStyle = hpPct > 0.4 ? '#10B981' : hpPct > 0.2 ? '#F59E0B' : '#EF4444';
+      ctx.fillRect(barX, barY, barW * hpPct, barH);
+
+      // Shield bar overlay
+      if (enemy.maxShield && enemy.maxShield > 0 && enemy.shield && enemy.shield > 0) {
+        const shieldPct = Math.max(0, Math.min(1, enemy.shield / enemy.maxShield));
+        ctx.fillStyle = '#38BDF8';
+        ctx.fillRect(barX, barY - 2, barW * shieldPct, 1.5);
+      }
       ctx.restore();
     }
   }
@@ -1031,6 +1337,22 @@ export class GameRenderer {
         ctx.lineTo(s * 0.8, -s);
         ctx.lineTo(s, s * 0.7);
         ctx.lineTo(-s * 0.5, s);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (part.shape === 'SHARD') {
+        // High-energy crystalline hardlight shield fragment
+        ctx.translate(part.x, part.y);
+        ctx.rotate(part.rotation || 0);
+        ctx.fillStyle = part.color;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        const s = part.size;
+        ctx.moveTo(s * 1.5, 0);
+        ctx.lineTo(0, s * 0.55);
+        ctx.lineTo(-s * 1.2, 0);
+        ctx.lineTo(0, -s * 0.55);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();

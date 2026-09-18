@@ -398,6 +398,53 @@ export class AudioManager {
     thud.stop(t + (isHeavy ? 0.09 : 0.05));
   }
 
+  // Heavy Phalanx Frontal Bulwark / Shield Shatter Explosion
+  public playShieldShatter(
+    emitterX: number,
+    emitterY: number,
+    listenerX: number,
+    listenerY: number
+  ) {
+    if (this.isMuted) return;
+    const gainVal = 0.48;
+    const route = this.createSpatialRoute(emitterX, emitterY, listenerX, listenerY, gainVal);
+    if (!route || !this.ctx) return;
+
+    const t = this.ctx.currentTime;
+
+    // 1. Crystalline High Harmonic Glass Fracture Chime (Descending shard frequencies)
+    const glass1 = this.ctx.createOscillator();
+    glass1.type = 'triangle';
+    glass1.frequency.setValueAtTime(3200, t);
+    glass1.frequency.exponentialRampToValueAtTime(840, t + 0.28);
+
+    const glass2 = this.ctx.createOscillator();
+    glass2.type = 'sawtooth';
+    glass2.frequency.setValueAtTime(2100, t);
+    glass2.frequency.exponentialRampToValueAtTime(520, t + 0.35);
+
+    // 2. Deep Sub-bass Energy Containment Collapse Thump
+    const subThump = this.ctx.createOscillator();
+    subThump.type = 'sine';
+    subThump.frequency.setValueAtTime(190, t);
+    subThump.frequency.exponentialRampToValueAtTime(32, t + 0.22);
+
+    glass1.connect(route.input);
+    glass2.connect(route.input);
+    subThump.connect(route.input);
+
+    route.outputGain.gain.setValueAtTime(gainVal, t);
+    route.outputGain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+
+    glass1.start(t);
+    glass2.start(t);
+    subThump.start(t);
+
+    glass1.stop(t + 0.28);
+    glass2.stop(t + 0.35);
+    subThump.stop(t + 0.22);
+  }
+
   // Tactical Dash
   public playDash() {
     if (this.isMuted) return;

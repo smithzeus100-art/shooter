@@ -25,12 +25,12 @@ export interface DroneBlueprint {
 export const DRONE_BLUEPRINTS: Record<DroneType, DroneBlueprint> = {
   BLASTER: {
     type: 'BLASTER',
-    name: 'Pulse Autocannon',
-    description: 'Controlled 3-round kinetic bursts with tungsten penetrators that shred armor.',
+    name: 'Smart Seeker Drone',
+    description: 'Autonomous micro-torpedo escort drone equipped with active terminal guidance.',
     color: '#00F0FF',
-    baseCooldown: 0.55,
-    damage: 28,
-    speed: 26,
+    baseCooldown: 0.65,
+    damage: 36,
+    speed: 24,
     piercing: 1,
     icon: 'Crosshair',
   },
@@ -84,8 +84,8 @@ export const ALL_UPGRADES: UpgradeOption[] = [
   // Drone Unlocks
   {
     id: 'drone_blaster',
-    title: 'Deploy Pulse Autocannon',
-    description: 'Attaches a rapid-fire kinetic drone to your escort formation.',
+    title: 'Deploy Smart Seeker Drone',
+    description: 'Attaches an autonomous guided micro-torpedo drone to your escort formation.',
     type: 'NEW_DRONE',
     droneType: 'BLASTER',
     rarity: 'COMMON',

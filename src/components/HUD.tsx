@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Heart, Zap, Crosshair, Volume2, VolumeX, Pause, Play, Cpu, Bot } from 'lucide-react';
+import { Shield, Heart, Zap, Volume2, VolumeX, Pause, Play, Cpu, Bot } from 'lucide-react';
 import { GameEngine } from '../game/engine';
 import { audioManager } from '../game/audio';
 
@@ -12,17 +12,11 @@ interface HUDProps {
 export const HUD: React.FC<HUDProps> = ({ engine, onPauseToggle, isPaused }) => {
   const p = engine.player;
   const [isMuted, setIsMuted] = React.useState(audioManager.getIsMuted());
-  const [autoFire, setAutoFire] = React.useState(engine.autoFire);
   const [isAiPilot, setIsAiPilot] = React.useState(engine.isAiPilot);
 
   const toggleMute = () => {
     const muted = audioManager.toggleMute();
     setIsMuted(muted);
-  };
-
-  const toggleAutoFire = () => {
-    engine.autoFire = !engine.autoFire;
-    setAutoFire(engine.autoFire);
   };
 
   const toggleAiPilot = () => {
@@ -154,19 +148,6 @@ export const HUD: React.FC<HUDProps> = ({ engine, onPauseToggle, isPaused }) => 
             >
               <Bot className="h-4 w-4" />
               <span>{engine.isAiPilot ? 'AI PILOT: ON' : 'AI PILOT: OFF'}</span>
-            </button>
-
-            <button
-              onClick={toggleAutoFire}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                autoFire
-                  ? 'bg-cyan-950/80 border-cyan-500/50 text-cyan-300 hover:bg-cyan-900/80'
-                  : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:bg-slate-800'
-              }`}
-              title="Toggle Auto-Fire"
-            >
-              <Crosshair className="h-3.5 w-3.5" />
-              <span>Auto-Fire</span>
             </button>
 
             <button

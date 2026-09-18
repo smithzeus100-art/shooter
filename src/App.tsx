@@ -59,8 +59,19 @@ export default function App() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
-      engine.mouseX = e.clientX - rect.left;
-      engine.mouseY = e.clientY - rect.top;
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+
+      const w = canvasRef.current.width;
+      const h = canvasRef.current.height;
+      const scale = Math.min(w / CANVAS_WIDTH, h / CANVAS_HEIGHT) || 1;
+      const offsetX = (w - CANVAS_WIDTH * scale) / 2;
+      const offsetY = (h - CANVAS_HEIGHT * scale) / 2;
+
+      engine.screenMouseX = (clientX - offsetX) / scale;
+      engine.screenMouseY = (clientY - offsetY) / scale;
+      engine.mouseX = engine.screenMouseX - CANVAS_WIDTH / 2 + engine.camera.x;
+      engine.mouseY = engine.screenMouseY - CANVAS_HEIGHT / 2 + engine.camera.y;
     };
 
     const handleMouseDown = (e: MouseEvent) => {
@@ -170,7 +181,7 @@ export default function App() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100">
-      {/* 60FPS High-DPI Canvas Layer */}
+      {/* 60FPS High-DPI Gameplay Canvas Layer */}
       <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full cursor-crosshair" />
 
       {/* Main Menu Screen */}

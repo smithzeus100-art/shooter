@@ -10,6 +10,9 @@ export interface DroneModule {
   fireTimer: number;
   x: number;
   y: number;
+  vx: number;
+  vy: number;
+  bankAngle: number;
   angle: number;
   targetAngle: number;
   color: string;
@@ -21,6 +24,39 @@ export interface DroneModule {
   targetEnemyId: string | null;
   barrelKick: number;
   isLockedOn: boolean;
+  thrusterPulse: number;
+  rcsFlare: number;
+  afterburner: number;
+  trail: Array<{ x: number; y: number; alpha: number }>;
+  // Destructibility & Durability
+  health: number;
+  maxHealth: number;
+  shield: number;
+  maxShield: number;
+  shieldRegenTimer: number;
+  hitFlashTimer: number;
+  // Independent Tactical AI
+  aiState: 'ESCORT' | 'ENGAGE' | 'EVADE' | 'INTERCEPT';
+  aiEvasionTimer: number;
+  aiEvasionVector: { x: number; y: number };
+  aiOrbitPhase: number;
+  // Synergy Mechanic state
+  synergyBuff: {
+    fireRateBonus: number;
+    damageBonus: number;
+    activeLinks: number;
+    nexusLinked: boolean;
+  };
+}
+
+export interface SynergyLink {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  color: string;
+  intensity: number;
+  isNexusLink: boolean;
 }
 
 export interface PlayerShip {
@@ -66,7 +102,7 @@ export interface PlayerShip {
   rcsTimer: number;
 }
 
-export type EnemyType = 'SCOUT' | 'SWARMER' | 'CHARGER' | 'BOMBER' | 'SNIPER' | 'TITAN_BOSS';
+export type EnemyType = 'SCOUT' | 'SWARMER' | 'CHARGER' | 'BOMBER' | 'SNIPER' | 'TITAN_BOSS' | 'INTERCEPTOR' | 'SHIELD_BEARER';
 
 export interface Enemy {
   id: string;
@@ -79,6 +115,8 @@ export interface Enemy {
   targetAngle: number;
   hp: number;
   maxHp: number;
+  shield?: number;
+  maxShield?: number;
   radius: number;
   speed: number;
   scoreValue: number;
@@ -91,6 +129,19 @@ export interface Enemy {
   isCharging: boolean;
   telegraphTimer: number;
   hitFlashTimer: number;
+  // Advanced Survivability & Flight Physics
+  dodgeCooldown: number;
+  dodgeTimer: number;
+  isRetreating: boolean;
+  evasionVector: { x: number; y: number };
+  shieldFlashTimer?: number;
+  // Flanking & Directional Bulwark Shield Properties
+  flankSide?: number; // -1 for left flank, 1 for right flank
+  frontalShieldArc?: number; // radians of forward shield coverage (e.g. 2.4 rad)
+  frontalShieldActive?: boolean;
+  frontalShieldHp?: number;
+  frontalShieldMaxHp?: number;
+  frontalShieldFlash?: number;
 }
 
 export interface Projectile {
@@ -149,7 +200,7 @@ export interface Particle {
   life: number;
   maxLife: number;
   decay: number;
-  shape?: 'CIRCLE' | 'LINE' | 'SPARK' | 'EMBER' | 'DEBRIS' | 'SMOKE' | 'FLASH';
+  shape?: 'CIRCLE' | 'LINE' | 'SPARK' | 'EMBER' | 'DEBRIS' | 'SMOKE' | 'FLASH' | 'SHARD';
   drag?: number;
   rotation?: number;
   rotSpeed?: number;

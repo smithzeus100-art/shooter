@@ -15,6 +15,7 @@ import {
   GameState,
   IonizationBeam,
   LightningArc,
+  SynergyLink,
 } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, DRONE_BLUEPRINTS, ALL_UPGRADES, updateCanvasDimensions } from './constants';
 import { audioManager } from './audio';
@@ -49,6 +50,7 @@ export class GameEngine {
   public shockwaves: Shockwave[] = [];
   public ionizationBeams: IonizationBeam[] = [];
   public lightningArcs: LightningArc[] = [];
+  public synergyLinks: SynergyLink[] = [];
   public drops: DropItem[] = [];
   public floatingTexts: FloatingText[] = [];
   public stars: Star[] = [];
@@ -63,10 +65,15 @@ export class GameEngine {
 
   public screenShakeAmount: number = 0;
   public keys: Record<string, boolean> = {};
+  public camera = {
+    x: CANVAS_WIDTH / 2,
+    y: CANVAS_HEIGHT / 2,
+  };
+  public screenMouseX: number = CANVAS_WIDTH / 2;
+  public screenMouseY: number = CANVAS_HEIGHT / 2;
   public mouseX: number = CANVAS_WIDTH / 2;
   public mouseY: number = CANVAS_HEIGHT / 2;
   public isMouseDown: boolean = false;
-  public autoFire: boolean = true;
   public hasDashShockwave: boolean = false;
   public isAiPilot: boolean = true;
   public aiStatusText: string = 'AI PILOT: SECTOR RECON PATROL';
@@ -278,6 +285,9 @@ export class GameEngine {
           fireTimer: 0,
           x: CANVAS_WIDTH / 2 - 30,
           y: CANVAS_HEIGHT / 2 + 30,
+          vx: 0,
+          vy: 0,
+          bankAngle: 0,
           angle: -Math.PI / 2,
           targetAngle: -Math.PI / 2,
           color: DRONE_BLUEPRINTS.BLASTER.color,
@@ -288,6 +298,26 @@ export class GameEngine {
           targetEnemyId: null,
           barrelKick: 0,
           isLockedOn: false,
+          thrusterPulse: 0,
+          rcsFlare: 0,
+          afterburner: 0,
+          trail: [],
+          health: 60,
+          maxHealth: 60,
+          shield: 30,
+          maxShield: 30,
+          shieldRegenTimer: 0,
+          hitFlashTimer: 0,
+          aiState: 'ESCORT',
+          aiEvasionTimer: 0,
+          aiEvasionVector: { x: 0, y: 0 },
+          aiOrbitPhase: Math.random() * Math.PI * 2,
+          synergyBuff: {
+            fireRateBonus: 0,
+            damageBonus: 0,
+            activeLinks: 0,
+            nexusLinked: false,
+          },
         },
       ],
     };
@@ -316,6 +346,12 @@ export class GameEngine {
     this.bossDefeated = false;
     this.hasDashShockwave = false;
     this.screenShakeAmount = 0;
+    this.camera.x = CANVAS_WIDTH / 2;
+    this.camera.y = CANVAS_HEIGHT / 2;
+    this.screenMouseX = CANVAS_WIDTH / 2;
+    this.screenMouseY = CANVAS_HEIGHT / 2;
+    this.mouseX = CANVAS_WIDTH / 2;
+    this.mouseY = CANVAS_HEIGHT / 2;
   }
 
   public startGame() {
@@ -353,6 +389,9 @@ export class GameEngine {
       fireTimer: 0,
       x: this.player.x,
       y: this.player.y,
+      vx: this.player.vx,
+      vy: this.player.vy,
+      bankAngle: 0,
       angle: this.player.angle,
       targetAngle: this.player.angle,
       color: bp.color,
@@ -363,6 +402,26 @@ export class GameEngine {
       targetEnemyId: null,
       barrelKick: 0,
       isLockedOn: false,
+      thrusterPulse: 0,
+      rcsFlare: 0,
+      afterburner: 0,
+      trail: [],
+      health: 60,
+      maxHealth: 60,
+      shield: 30,
+      maxShield: 30,
+      shieldRegenTimer: 0,
+      hitFlashTimer: 0,
+      aiState: 'ESCORT',
+      aiEvasionTimer: 0,
+      aiEvasionVector: { x: 0, y: 0 },
+      aiOrbitPhase: Math.random() * Math.PI * 2,
+      synergyBuff: {
+        fireRateBonus: 0,
+        damageBonus: 0,
+        activeLinks: 0,
+        nexusLinked: false,
+      },
     };
     this.player.drones.push(newDrone);
     this.addFloatingText(this.player.x, this.player.y - 30, `+ ${bp.name}`, bp.color);
@@ -547,50 +606,24 @@ export class GameEngine {
   // Core 60fps update cycle
   public update(dt: number) {
     const clampedDt = Math.min(dt, 0.1);
-
-    // Player velocity for parallax displacement
-    const pVx = this.player ? this.player.vx : 0;
-    const pVy = this.player ? this.player.vy : 0;
     const isPlaying = this.state === 'PLAYING';
 
-    // Update dynamic multi-layer parallax stars
+    // Update background stars ambient gentle drift and twinkle
     for (const star of this.stars) {
-      // Base natural ambient drift down
-      const baseDrift = star.speed * (isPlaying ? 1.4 : 0.5);
-
-      // Parallax layer multiplier: Layer 1 (0.08x), Layer 2 (0.24x), Layer 3 (0.55x)
-      const parallaxFactor = star.layer === 1 ? 0.08 : star.layer === 2 ? 0.24 : 0.55;
-
-      // React dynamically to player velocity vector
-      star.x -= pVx * parallaxFactor;
-      star.y += baseDrift - pVy * parallaxFactor;
-
-      // Twinkle phase update
+      star.y += star.speed * (isPlaying ? 18 : 8) * clampedDt;
       star.twinklePhase += star.twinkleSpeed * clampedDt;
 
-      // Seamless boundary wrapping with generous bleed margins
-      const bleed = 40;
-      if (star.x < -bleed) {
-        star.x = CANVAS_WIDTH + bleed;
-        star.y = Math.random() * CANVAS_HEIGHT;
-      } else if (star.x > CANVAS_WIDTH + bleed) {
-        star.x = -bleed;
-        star.y = Math.random() * CANVAS_HEIGHT;
-      }
-
-      if (star.y < -bleed) {
-        star.y = CANVAS_HEIGHT + bleed;
-        star.x = Math.random() * CANVAS_WIDTH;
-      } else if (star.y > CANVAS_HEIGHT + bleed) {
-        star.y = -bleed;
+      // Wrap boundary
+      if (star.y > CANVAS_HEIGHT + 30) {
+        star.y = -30;
         star.x = Math.random() * CANVAS_WIDTH;
       }
     }
 
-    // Update drifting cosmic nebulae
+    // Update cosmic nebulae ambient drift
     for (const neb of this.nebulae) {
-      neb.x += neb.vx - pVx * 0.03;
-      neb.y += neb.vy - pVy * 0.03;
+      neb.x += neb.vx * clampedDt * 20;
+      neb.y += neb.vy * clampedDt * 20;
 
       if (neb.x < -neb.radius) neb.x = CANVAS_WIDTH + neb.radius;
       if (neb.x > CANVAS_WIDTH + neb.radius) neb.x = -neb.radius;
@@ -608,6 +641,17 @@ export class GameEngine {
     // Update Player & Drones
     this.updatePlayer(clampedDt);
     this.updateDrones(clampedDt);
+
+    // Dynamic Eased Camera: Frame-rate independent exponential smoothing for responsive, jitter-free tracking
+    const targetCamX = this.player.x;
+    const targetCamY = this.player.y;
+    const camEasing = 1.0 - Math.exp(-10.0 * clampedDt);
+    this.camera.x += (targetCamX - this.camera.x) * camEasing;
+    this.camera.y += (targetCamY - this.camera.y) * camEasing;
+
+    // Convert screen mouse coordinates to continuous world coordinates
+    this.mouseX = this.screenMouseX - CANVAS_WIDTH / 2 + this.camera.x;
+    this.mouseY = this.screenMouseY - CANVAS_HEIGHT / 2 + this.camera.y;
 
     // Update Projectiles & Collisions
     this.updateProjectiles(clampedDt);
@@ -815,23 +859,6 @@ export class GameEngine {
     p.x += p.vx;
     p.y += p.vy;
 
-    // Endless Space Matrix: Seamless Toroidal Space Wrapping
-    if (p.x < 0) {
-      p.x += CANVAS_WIDTH;
-      p.history.forEach((h) => (h.x += CANVAS_WIDTH));
-    } else if (p.x >= CANVAS_WIDTH) {
-      p.x -= CANVAS_WIDTH;
-      p.history.forEach((h) => (h.x -= CANVAS_WIDTH));
-    }
-
-    if (p.y < 0) {
-      p.y += CANVAS_HEIGHT;
-      p.history.forEach((h) => (h.y += CANVAS_HEIGHT));
-    } else if (p.y >= CANVAS_HEIGHT) {
-      p.y -= CANVAS_HEIGHT;
-      p.history.forEach((h) => (h.y -= CANVAS_HEIGHT));
-    }
-
     // Aim toward mouse cursor smoothly
     const targetAngle = Math.atan2(this.mouseY - p.y, this.mouseX - p.x);
     let diff = targetAngle - p.angle;
@@ -939,7 +966,7 @@ export class GameEngine {
       p.fireTimer -= dt;
     }
 
-    const shouldFire = (this.isMouseDown || this.autoFire) && p.fireTimer <= 0;
+    const shouldFire = this.isMouseDown && p.fireTimer <= 0;
     if (shouldFire) {
       this.firePlayerPrimary();
       p.fireTimer = p.fireCooldown / p.fireRateMultiplier;
@@ -1051,71 +1078,374 @@ export class GameEngine {
   }
 
   private updateDrones(dt: number) {
-    const drones = this.player.drones;
-    if (drones.length === 0) return;
+    const p = this.player;
+    const drones = p.drones;
+    if (drones.length === 0) {
+      this.synergyLinks = [];
+      return;
+    }
 
-    // Position drones smoothly in dynamic tactical escort formations
-    drones.forEach((drone, idx) => {
-      // Calculate target wing offset position based on historical anchor
-      const historyIndex = Math.min((idx + 1) * 8, this.player.history.length - 1);
-      const anchor = this.player.history[historyIndex] || {
-        x: this.player.x,
-        y: this.player.y,
-        angle: this.player.angle,
+    // --- Dynamic Synergy Link & Buff Network ---
+    this.synergyLinks = [];
+    const SYNERGY_NEXUS_RADIUS = 180;
+    const SYNERGY_DRONE_RADIUS = 150;
+
+    // Reset synergy buffs per frame
+    for (const d of drones) {
+      d.synergyBuff = {
+        fireRateBonus: 0,
+        damageBonus: 0,
+        activeLinks: 0,
+        nexusLinked: false,
       };
+    }
 
-      // Lateral V-wing spacing
-      const side = idx % 2 === 0 ? 1 : -1;
-      const tier = Math.floor(idx / 2) + 1;
-      const lateralDist = side * tier * 30;
-      const perpAngle = anchor.angle + Math.PI / 2;
+    // 1. Drone <-> Nexus Core links
+    for (const d of drones) {
+      const distToPlayer = Math.hypot(d.x - p.x, d.y - p.y);
+      if (distToPlayer <= SYNERGY_NEXUS_RADIUS) {
+        const proximityRatio = Math.max(0, 1 - distToPlayer / SYNERGY_NEXUS_RADIUS);
+        d.synergyBuff.nexusLinked = true;
+        d.synergyBuff.activeLinks++;
+        d.synergyBuff.fireRateBonus += 0.20 * (0.5 + 0.5 * proximityRatio); // +10% to +20%
+        d.synergyBuff.damageBonus += 0.20 * (0.5 + 0.5 * proximityRatio);   // +10% to +20%
 
-      const targetX = anchor.x + Math.cos(perpAngle) * lateralDist;
-      const targetY = anchor.y + Math.sin(perpAngle) * lateralDist;
+        this.synergyLinks.push({
+          sourceId: 'player',
+          targetId: d.id,
+          x1: p.x,
+          y1: p.y,
+          x2: d.x,
+          y2: d.y,
+          distance: distToPlayer,
+          maxDistance: SYNERGY_NEXUS_RADIUS,
+          color: d.color,
+          alpha: 0.25 + 0.55 * proximityRatio,
+          pulsePhase: (Date.now() * 0.006) % (Math.PI * 2),
+        });
+      }
+    }
 
-      // Smooth flight interpolation with toroidal wrap handling
-      let dx = targetX - drone.x;
-      if (dx > CANVAS_WIDTH / 2) dx -= CANVAS_WIDTH;
-      if (dx < -CANVAS_WIDTH / 2) dx += CANVAS_WIDTH;
+    // 2. Drone <-> Drone peer synergy links
+    for (let i = 0; i < drones.length; i++) {
+      for (let j = i + 1; j < drones.length; j++) {
+        const d1 = drones[i];
+        const d2 = drones[j];
+        const dist = Math.hypot(d2.x - d1.x, d2.y - d1.y);
+        if (dist <= SYNERGY_DRONE_RADIUS) {
+          const proximityRatio = Math.max(0, 1 - dist / SYNERGY_DRONE_RADIUS);
+          d1.synergyBuff.activeLinks++;
+          d2.synergyBuff.activeLinks++;
 
-      let dy = targetY - drone.y;
-      if (dy > CANVAS_HEIGHT / 2) dy -= CANVAS_HEIGHT;
-      if (dy < -CANVAS_HEIGHT / 2) dy += CANVAS_HEIGHT;
+          // Cross-wingman mutual fire rate and damage amplification (+8% to +15%)
+          const peerBonus = 0.15 * (0.5 + 0.5 * proximityRatio);
+          d1.synergyBuff.fireRateBonus += peerBonus;
+          d1.synergyBuff.damageBonus += peerBonus;
+          d2.synergyBuff.fireRateBonus += peerBonus;
+          d2.synergyBuff.damageBonus += peerBonus;
 
-      drone.x += dx * 0.22;
-      drone.y += dy * 0.22;
+          // Blend colors or use source color
+          this.synergyLinks.push({
+            sourceId: d1.id,
+            targetId: d2.id,
+            x1: d1.x,
+            y1: d1.y,
+            x2: d2.x,
+            y2: d2.y,
+            distance: dist,
+            maxDistance: SYNERGY_DRONE_RADIUS,
+            color: d1.color,
+            alpha: 0.2 + 0.5 * proximityRatio,
+            pulsePhase: (Date.now() * 0.007 + i) % (Math.PI * 2),
+          });
+        }
+      }
+    }
 
-      // Wrap drone coordinates
-      if (drone.x < 0) drone.x += CANVAS_WIDTH;
-      else if (drone.x >= CANVAS_WIDTH) drone.x -= CANVAS_WIDTH;
+    // Process each escort wingman with realistic aerospace flight physics and autonomous tactical AI
+    for (let idx = drones.length - 1; idx >= 0; idx--) {
+      const drone = drones[idx];
 
-      if (drone.y < 0) drone.y += CANVAS_HEIGHT;
-      else if (drone.y >= CANVAS_HEIGHT) drone.y -= CANVAS_HEIGHT;
-
-      // Decay physical barrel recoil kick
-      if (drone.barrelKick > 0) {
-        drone.barrelKick = Math.max(0, drone.barrelKick - dt * 5.5);
+      // 1. Health & Shield durability ticks
+      if (drone.hitFlashTimer > 0) {
+        drone.hitFlashTimer = Math.max(0, drone.hitFlashTimer - dt);
+      }
+      if (drone.shield < drone.maxShield) {
+        drone.shieldRegenTimer += dt;
+        if (drone.shieldRegenTimer >= 2.5) {
+          drone.shield = Math.min(drone.maxShield, drone.shield + dt * 14);
+        }
       }
 
-      // Find nearest hostile target within active sensor range (650px)
-      const nearestEnemy = this.findNearestEnemy(drone.x, drone.y, 650);
+      // Decay visual effects (RCS flare, barrel kick)
+      if (drone.rcsFlare > 0) {
+        drone.rcsFlare = Math.max(0, drone.rcsFlare - dt * 4.0);
+      }
+      if (drone.barrelKick > 0) {
+        drone.barrelKick = Math.max(0, drone.barrelKick - dt * 6.0);
+      }
+
+      // 2. Proximity Hostile & Threat Detection
+      const nearestEnemy = this.findNearestEnemy(drone.x, drone.y, 750);
+      const distToPlayer = Math.hypot(drone.x - p.x, drone.y - p.y);
+
+      // Check if enemy is tailing the player flagship (within 220px behind player heading)
+      let tailChaser: Enemy | null = null;
       if (nearestEnemy) {
-        drone.targetAngle = Math.atan2(nearestEnemy.y - drone.y, nearestEnemy.x - drone.x);
+        const dxToEnemy = nearestEnemy.x - p.x;
+        const dyToEnemy = nearestEnemy.y - p.y;
+        const distToShip = Math.hypot(dxToEnemy, dyToEnemy);
+        if (distToShip < 240) {
+          const angleToEnemy = Math.atan2(dyToEnemy, dxToEnemy);
+          let relAngle = angleToEnemy - p.angle;
+          while (relAngle < -Math.PI) relAngle += Math.PI * 2;
+          while (relAngle > Math.PI) relAngle -= Math.PI * 2;
+          // Enemy is behind flagship (+/- 60 degrees from reverse heading)
+          if (Math.abs(relAngle) > 2.1) {
+            tailChaser = nearestEnemy;
+          }
+        }
+      }
+
+      // Check for incoming hostile projectile threat within collision path (130px)
+      if (drone.aiEvasionTimer <= 0) {
+        let incomingThreat = false;
+        let threatAngle = 0;
+        for (let pj = 0; pj < this.projectiles.length; pj++) {
+          const prj = this.projectiles[pj];
+          if (!prj.isEnemy) continue;
+          const pDist = Math.hypot(prj.x - drone.x, prj.y - drone.y);
+          if (pDist < 110) {
+            incomingThreat = true;
+            threatAngle = Math.atan2(drone.y - prj.y, drone.x - prj.x);
+            break;
+          }
+        }
+
+        // Also evade if an enemy is dangerously close and ramming
+        if (!incomingThreat && nearestEnemy && Math.hypot(nearestEnemy.x - drone.x, nearestEnemy.y - drone.y) < 70) {
+          incomingThreat = true;
+          threatAngle = Math.atan2(drone.y - nearestEnemy.y, drone.x - nearestEnemy.x);
+        }
+
+        if (incomingThreat) {
+          drone.aiState = 'EVADE';
+          drone.aiEvasionTimer = 0.38;
+          // Break hard perpendicular to threat trajectory
+          const breakSide = Math.random() < 0.5 ? 1 : -1;
+          const evadeAngle = threatAngle + (Math.PI / 2) * breakSide;
+          drone.aiEvasionVector = { x: Math.cos(evadeAngle), y: Math.sin(evadeAngle) };
+          drone.rcsFlare = 1.0;
+          this.spawnSparks(drone.x, drone.y, drone.color, 3);
+        }
+      }
+
+      // 3. Autonomous Tactical AI Waypoint Solving & Flight Navigation
+      let targetX = p.x;
+      let targetY = p.y;
+      let targetVx = p.vx;
+      let targetVy = p.vy;
+      let navGain = 6.0;
+      let dampingGain = 3.8;
+
+      if (drone.aiEvasionTimer > 0) {
+        // High-G defensive break turn
+        drone.aiEvasionTimer -= dt;
+        targetX = drone.x + drone.aiEvasionVector.x * 160;
+        targetY = drone.y + drone.aiEvasionVector.y * 160;
+        targetVx = drone.aiEvasionVector.x * p.maxSpeed * 1.5;
+        targetVy = drone.aiEvasionVector.y * p.maxSpeed * 1.5;
+        navGain = 12.0;
+        dampingGain = 2.4;
+        drone.afterburner = 1.0;
+      } else if (tailChaser) {
+        // Tail Defense: Peel off to intercept flagship chaser
+        drone.aiState = 'INTERCEPT';
+        const attackAngle = Math.atan2(tailChaser.y - p.y, tailChaser.x - p.x);
+        targetX = tailChaser.x + Math.cos(attackAngle + Math.PI / 3) * 110;
+        targetY = tailChaser.y + Math.sin(attackAngle + Math.PI / 3) * 110;
+        targetVx = tailChaser.vx * 60;
+        targetVy = tailChaser.vy * 60;
+        navGain = 8.5;
+        dampingGain = 3.6;
+        drone.afterburner = 0.8;
+      } else if (nearestEnemy && distToPlayer < 400) {
+        // Combat Engagement Run: High-speed tactical strafe across enemy flank
+        drone.aiState = 'ENGAGE';
+        drone.aiOrbitPhase = (drone.aiOrbitPhase + dt * 1.6) % (Math.PI * 2);
+
+        let optimalRange = 180;
+        if (drone.type === 'SPREAD') optimalRange = 115; // Brawler
+        else if (drone.type === 'MISSILE') optimalRange = 270; // Long-range salvo
+        else if (drone.type === 'RAILGUN') optimalRange = 330; // Standoff sniper
+        else if (drone.type === 'TESLA') optimalRange = 145; // Chain interceptor
+
+        const enemyDist = Math.hypot(nearestEnemy.x - drone.x, nearestEnemy.y - drone.y);
+        const orbitAngle = Math.atan2(drone.y - nearestEnemy.y, drone.x - nearestEnemy.x) + (enemyDist < optimalRange * 0.7 ? 0.9 : 0.4);
+
+        targetX = nearestEnemy.x + Math.cos(orbitAngle) * optimalRange;
+        targetY = nearestEnemy.y + Math.sin(orbitAngle) * optimalRange;
+
+        // Leash clamp to flagship combat perimeter
+        const dxFromShip = targetX - p.x;
+        const dyFromShip = targetY - p.y;
+        const distFromShip = Math.hypot(dxFromShip, dyFromShip);
+        if (distFromShip > 360) {
+          targetX = p.x + (dxFromShip / distFromShip) * 360;
+          targetY = p.y + (dyFromShip / distFromShip) * 360;
+        }
+
+        targetVx = p.vx * 0.8 + nearestEnemy.vx * 30;
+        targetVy = p.vy * 0.8 + nearestEnemy.vy * 30;
+        navGain = 7.0;
+        dampingGain = 3.4;
+        drone.afterburner = enemyDist > optimalRange * 1.3 ? 0.9 : 0.3;
+      } else {
+        // Escort Formation: Symmetrical tactical wingman slots in lead ship reference frame
+        drone.aiState = 'ESCORT';
+
+        let formAngleOffset = 0;
+        let formDist = 52;
+
+        if (idx === 0) {
+          // Port Echelon Wingman
+          formAngleOffset = -2.45;
+          formDist = 54;
+        } else if (idx === 1) {
+          // Starboard Echelon Wingman
+          formAngleOffset = 2.45;
+          formDist = 54;
+        } else if (idx === 2) {
+          // Port Combat Spread Flanker
+          formAngleOffset = -2.68;
+          formDist = 96;
+        } else if (idx === 3) {
+          // Starboard Combat Spread Flanker
+          formAngleOffset = 2.68;
+          formDist = 96;
+        } else if (idx === 4) {
+          // Rear High-Guard Cover
+          formAngleOffset = Math.PI;
+          formDist = 72;
+        } else {
+          // Extended Outer Spread
+          const side = idx % 2 === 0 ? 1 : -1;
+          formAngleOffset = Math.PI + side * 0.38;
+          formDist = 118;
+        }
+
+        const slotAngle = p.angle + formAngleOffset;
+        targetX = p.x + Math.cos(slotAngle) * formDist;
+        targetY = p.y + Math.sin(slotAngle) * formDist;
+
+        // Velocity matching: match lead ship's velocity vector perfectly
+        targetVx = p.vx;
+        targetVy = p.vy;
+
+        const gapDist = Math.hypot(targetX - drone.x, targetY - drone.y);
+        drone.afterburner = gapDist > 75 ? Math.min(1.0, (gapDist - 75) / 60) : 0;
+        navGain = 9.5;
+        dampingGain = 4.6;
+      }
+
+      // 4. Realistic Aerospace Propulsion & Inertial Flight Physics
+      const toTargetX = targetX - drone.x;
+      const toTargetY = targetY - drone.y;
+      const distToStation = Math.hypot(toTargetX, toTargetY);
+
+      // Relative velocity damping to eliminate oscillation
+      const relVx = drone.vx - targetVx;
+      const relVy = drone.vy - targetVy;
+
+      let ax = toTargetX * navGain - relVx * dampingGain;
+      let ay = toTargetY * navGain - relVy * dampingGain;
+
+      // Inter-wingman elastic collision avoidance
+      for (let j = 0; j < drones.length; j++) {
+        if (idx !== j) {
+          const other = drones[j];
+          const sepX = drone.x - other.x;
+          const sepY = drone.y - other.y;
+          const sepDist = Math.hypot(sepX, sepY);
+          const minSpacing = 38;
+          if (sepDist < minSpacing && sepDist > 0.001) {
+            const repForce = ((minSpacing - sepDist) / minSpacing) * 160;
+            ax += (sepX / sepDist) * repForce;
+            ay += (sepY / sepDist) * repForce;
+          }
+        }
+      }
+
+      // Integrate velocity with aerospace acceleration
+      drone.vx += ax * dt;
+      drone.vy += ay * dt;
+
+      // Maximum wingman velocity clamp
+      const currentSpeed = Math.hypot(drone.vx, drone.vy);
+      const maxWingmanSpeed = p.maxSpeed * (1.6 + (drone.afterburner || 0) * 0.5);
+      if (currentSpeed > maxWingmanSpeed) {
+        drone.vx = (drone.vx / currentSpeed) * maxWingmanSpeed;
+        drone.vy = (drone.vy / currentSpeed) * maxWingmanSpeed;
+      }
+
+      // Integrate position
+      drone.x += drone.vx * (dt * 60);
+      drone.y += drone.vy * (dt * 60);
+
+      // Engine thruster pulse measurement
+      drone.thrusterPulse = Math.min(1.0, Math.hypot(ax, ay) / 24 + (drone.afterburner || 0) * 0.4);
+
+      // Update fading ion thruster trail history
+      const nozzleX = drone.x - Math.cos(drone.angle) * 10;
+      const nozzleY = drone.y - Math.sin(drone.angle) * 10;
+      if (!drone.trail) drone.trail = [];
+      drone.trail.unshift({ x: nozzleX, y: nozzleY, alpha: 1.0 });
+      if (drone.trail.length > 9) drone.trail.pop();
+      for (let t = 0; t < drone.trail.length; t++) {
+        drone.trail[t].alpha = Math.max(0, drone.trail[t].alpha - dt * 3.8);
+      }
+
+      // 5. Realistic Aerodynamic Heading & 3D Roll Banking Calculation
+      if (nearestEnemy && (drone.aiState === 'ENGAGE' || drone.aiState === 'INTERCEPT')) {
+        // Predictive lead aiming on target
+        const targetLeadDist = Math.hypot(nearestEnemy.x - drone.x, nearestEnemy.y - drone.y);
+        const projectileSpd = DRONE_BLUEPRINTS[drone.type].speed;
+        const timeToHit = targetLeadDist / (projectileSpd * 60);
+        const aimTargetX = nearestEnemy.x + nearestEnemy.vx * timeToHit * 60;
+        const aimTargetY = nearestEnemy.y + nearestEnemy.vy * timeToHit * 60;
+
+        drone.targetAngle = Math.atan2(aimTargetY - drone.y, aimTargetX - drone.x);
         drone.targetEnemyId = nearestEnemy.id;
       } else {
-        drone.targetAngle = this.player.angle;
+        // Heading aligns smoothly with flight velocity vector or lead ship heading
+        if (currentSpeed > 0.8) {
+          drone.targetAngle = Math.atan2(drone.vy, drone.vx);
+        } else {
+          drone.targetAngle = this.player.angle;
+        }
         drone.targetEnemyId = null;
         drone.isLockedOn = false;
         drone.chargeTimer = 0;
       }
 
-      // Smooth turret rotation towards target
-      let diff = drone.targetAngle - drone.angle;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      drone.angle += diff * 0.2;
+      // Smooth angular turning with angular rate limit
+      let headingDiff = drone.targetAngle - drone.angle;
+      while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+      while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
 
-      const isAligned = Math.abs(diff) < 0.38;
+      const turnRate = Math.max(-8.0, Math.min(8.0, headingDiff * 14.0));
+      drone.angle += turnRate * dt;
+
+      // Dynamic banking calculation based on angular turn rate and lateral G-forces
+      const lateralG = (-Math.sin(drone.angle) * ax + Math.cos(drone.angle) * ay) * 0.009;
+      const targetBank = Math.max(-0.75, Math.min(0.75, turnRate * 0.08 + lateralG));
+      drone.bankAngle += (targetBank - drone.bankAngle) * Math.min(1.0, dt * 11);
+
+      if (Math.abs(headingDiff) > 0.7) {
+        drone.rcsFlare = Math.max(drone.rcsFlare, 0.6);
+      }
+
+      const isAligned = Math.abs(headingDiff) < 0.38;
 
       // Drone Weapon Cooldown Tick
       if (drone.fireTimer > 0) {
@@ -1123,23 +1453,15 @@ export class GameEngine {
       }
 
       const bp = DRONE_BLUEPRINTS[drone.type];
-      const effectiveCooldown = (bp.baseCooldown / this.player.fireRateMultiplier) * (1 - (drone.level - 1) * 0.12);
+      const synergyFireBonus = drone.synergyBuff ? drone.synergyBuff.fireRateBonus : 0;
+      const effectiveCooldown = (bp.baseCooldown / (this.player.fireRateMultiplier * (1 + synergyFireBonus))) * (1 - (drone.level - 1) * 0.12);
 
       // --- Weapon-Specific Tactical Cadence Engines ---
 
       if (drone.type === 'BLASTER') {
-        // Continuous burst processor
-        if (drone.burstRemaining > 0) {
-          drone.burstTimer -= dt;
-          if (drone.burstTimer <= 0) {
-            this.fireBlasterBurstRound(drone);
-            drone.burstRemaining--;
-            drone.burstTimer = 0.07;
-          }
-        } else if (drone.fireTimer <= 0 && isAligned && (nearestEnemy || this.isMouseDown)) {
-          // Initiate new 3-round (or 4/5 round at higher levels) burst
-          drone.burstRemaining = 3 + (drone.level - 1);
-          drone.burstTimer = 0;
+        // Smart Seeker Drone: Targets nearest hostile autonomously with terminal-guided micro-torpedoes
+        if (drone.fireTimer <= 0 && nearestEnemy) {
+          this.fireBlasterBurstRound(drone);
           drone.fireTimer = effectiveCooldown;
         }
       } else if (drone.type === 'SPREAD') {
@@ -1172,7 +1494,6 @@ export class GameEngine {
             drone.chargeTimer += dt;
 
             // Ambient electric energy particles converging on dual rail muzzle tip
-            const chargeRatio = drone.chargeTimer / drone.maxChargeTimer;
             if (Math.random() < 0.25) {
               const muzzleX = drone.x + Math.cos(drone.angle) * 14;
               const muzzleY = drone.y + Math.sin(drone.angle) * 14;
@@ -1197,30 +1518,126 @@ export class GameEngine {
 
             if (drone.chargeTimer >= drone.maxChargeTimer) {
               this.fireRailgunSabot(drone);
-              drone.chargeTimer = 0;
               drone.fireTimer = effectiveCooldown;
+              drone.chargeTimer = 0;
             }
           }
         } else {
-          drone.chargeTimer = 0;
+          drone.chargeTimer = Math.max(0, drone.chargeTimer - dt * 2);
         }
       } else if (drone.type === 'TESLA') {
-        // Arc Discharge Coil: High-voltage lightning discharge
-        if (drone.fireTimer <= 0 && nearestEnemy && Math.hypot(nearestEnemy.x - drone.x, nearestEnemy.y - drone.y) < 380) {
+        // Arc Coil: Branching lightning discharge
+        if (drone.fireTimer <= 0 && nearestEnemy && Math.hypot(nearestEnemy.x - drone.x, nearestEnemy.y - drone.y) < 280) {
           this.fireTeslaArc(drone, nearestEnemy);
           drone.fireTimer = effectiveCooldown;
         }
       }
+    }
+  }
+
+  public hitDrone(drone: DroneModule, damage: number) {
+    drone.shieldRegenTimer = 0;
+    let remainingDmg = damage;
+
+    if (drone.shield > 0) {
+      drone.hitFlashTimer = 0.12;
+      if (drone.shield >= remainingDmg) {
+        drone.shield -= remainingDmg;
+        remainingDmg = 0;
+        this.addFloatingText(drone.x, drone.y - 12, `DEFLECT ${Math.round(damage)}`, '#38BDF8');
+        this.spawnSparks(drone.x, drone.y, '#38BDF8', 4);
+        audioManager.playPositionalHit(drone.x, drone.y, true, this.player.x, this.player.y);
+      } else {
+        remainingDmg -= drone.shield;
+        drone.shield = 0;
+        this.addFloatingText(drone.x, drone.y - 12, 'SHIELD BROKEN', '#38BDF8');
+        this.shockwaves.push({
+          x: drone.x,
+          y: drone.y,
+          radius: 4,
+          maxRadius: 20,
+          color: '#38BDF8',
+          alpha: 0.8,
+          life: 0.12,
+          maxLife: 0.12,
+        });
+        audioManager.playPositionalHit(drone.x, drone.y, true, this.player.x, this.player.y);
+      }
+    }
+
+    if (remainingDmg > 0) {
+      drone.health -= remainingDmg;
+      drone.hitFlashTimer = 0.15;
+      this.addFloatingText(drone.x, drone.y - 10, `-${Math.round(remainingDmg)}`, '#F59E0B');
+      this.spawnSparks(drone.x, drone.y, drone.color, 5);
+      audioManager.playPositionalHit(drone.x, drone.y, false, this.player.x, this.player.y);
+    }
+
+    if (drone.health <= 0) {
+      this.destroyDrone(drone);
+    }
+  }
+
+  private destroyDrone(drone: DroneModule) {
+    const idx = this.player.drones.findIndex((d) => d.id === drone.id);
+    if (idx !== -1) {
+      this.player.drones.splice(idx, 1);
+    }
+
+    // Positional explosion audio & screen micro-shake
+    audioManager.playPositionalExplosion(drone.x, drone.y, false, this.player.x, this.player.y);
+    this.triggerScreenShake(3.5);
+
+    // Floating combat text
+    const bp = DRONE_BLUEPRINTS[drone.type];
+    this.addFloatingText(drone.x, drone.y - 20, `${bp.name.toUpperCase()} LOST`, '#EF4444');
+
+    // Shockwave
+    this.shockwaves.push({
+      x: drone.x,
+      y: drone.y,
+      radius: 4,
+      maxRadius: 38,
+      color: drone.color,
+      alpha: 0.9,
+      life: 0.22,
+      maxLife: 0.22,
     });
+
+    // Hull debris & sparks
+    this.spawnSparks(drone.x, drone.y, drone.color, 16);
+    for (let i = 0; i < 5; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = Math.random() * 6 + 2;
+      this.particles.push({
+        x: drone.x,
+        y: drone.y,
+        vx: Math.cos(ang) * spd + drone.vx * 0.3,
+        vy: Math.sin(ang) * spd + drone.vy * 0.3,
+        size: Math.random() * 3.5 + 1.5,
+        color: drone.color,
+        alpha: 1.0,
+        life: Math.random() * 0.5 + 0.3,
+        maxLife: Math.random() * 0.5 + 0.3,
+        decay: 2.0,
+        shape: 'DEBRIS',
+        drag: 0.92,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 12,
+        hasTrail: true,
+      });
+    }
   }
 
   // Tactical Drone Firing Implementations:
 
   private fireBlasterBurstRound(drone: DroneModule) {
     const bp = DRONE_BLUEPRINTS.BLASTER;
-    const dmg = bp.damage * this.player.damageMultiplier * (1 + (drone.level - 1) * 0.3);
+    const synergyDmgBonus = drone.synergyBuff ? drone.synergyBuff.damageBonus : 0;
+    const dmg = bp.damage * this.player.damageMultiplier * (1 + synergyDmgBonus) * (1 + (drone.level - 1) * 0.3);
     const speed = bp.speed;
     const fireAngle = drone.angle;
+    const nearest = this.findNearestEnemy(drone.x, drone.y, 650);
 
     drone.barrelKick = 1.0;
     this.spawnMuzzleFlash(drone.x, drone.y, fireAngle, bp.color, 3);
@@ -1231,15 +1648,19 @@ export class GameEngine {
       y: drone.y + Math.sin(fireAngle) * 8,
       vx: Math.cos(fireAngle) * speed,
       vy: Math.sin(fireAngle) * speed,
-      radius: 3.2,
+      radius: 3.5,
       damage: dmg,
       color: bp.color,
       weaponType: 'BLASTER',
       level: drone.level,
       isEnemy: false,
       piercing: 1,
-      life: 0.95,
-      maxLife: 0.95,
+      life: 1.8,
+      maxLife: 1.8,
+      isMissile: true,
+      targetEnemyId: nearest ? nearest.id : null,
+      homingStrength: 0.16 + (drone.level - 1) * 0.04,
+      stage: 0,
       trail: [{ x: drone.x, y: drone.y }],
     });
 
@@ -1248,7 +1669,8 @@ export class GameEngine {
 
   private fireSpreadFlak(drone: DroneModule) {
     const bp = DRONE_BLUEPRINTS.SPREAD;
-    const dmg = bp.damage * this.player.damageMultiplier * (1 + (drone.level - 1) * 0.25);
+    const synergyDmgBonus = drone.synergyBuff ? drone.synergyBuff.damageBonus : 0;
+    const dmg = bp.damage * this.player.damageMultiplier * (1 + synergyDmgBonus) * (1 + (drone.level - 1) * 0.25);
     const speed = bp.speed;
     const fireAngle = drone.angle;
 
@@ -1294,7 +1716,8 @@ export class GameEngine {
 
   private fireMissileSalvo(drone: DroneModule, target: Enemy) {
     const bp = DRONE_BLUEPRINTS.MISSILE;
-    const dmg = bp.damage * this.player.damageMultiplier * (1 + (drone.level - 1) * 0.35);
+    const synergyDmgBonus = drone.synergyBuff ? drone.synergyBuff.damageBonus : 0;
+    const dmg = bp.damage * this.player.damageMultiplier * (1 + synergyDmgBonus) * (1 + (drone.level - 1) * 0.35);
     const speed = bp.speed;
     const fireAngle = drone.angle;
 
@@ -1339,7 +1762,8 @@ export class GameEngine {
 
   private fireRailgunSabot(drone: DroneModule) {
     const bp = DRONE_BLUEPRINTS.RAILGUN;
-    const dmg = bp.damage * this.player.damageMultiplier * (1 + (drone.level - 1) * 0.35);
+    const synergyDmgBonus = drone.synergyBuff ? drone.synergyBuff.damageBonus : 0;
+    const dmg = bp.damage * this.player.damageMultiplier * (1 + synergyDmgBonus) * (1 + (drone.level - 1) * 0.35);
     const speed = bp.speed;
     const fireAngle = drone.angle;
 
@@ -1427,7 +1851,8 @@ export class GameEngine {
 
   private fireTeslaArc(drone: DroneModule, primaryTarget: Enemy) {
     const bp = DRONE_BLUEPRINTS.TESLA;
-    const dmg = bp.damage * this.player.damageMultiplier * (1 + (drone.level - 1) * 0.3);
+    const synergyDmgBonus = drone.synergyBuff ? drone.synergyBuff.damageBonus : 0;
+    const dmg = bp.damage * this.player.damageMultiplier * (1 + synergyDmgBonus) * (1 + (drone.level - 1) * 0.3);
     const maxChains = 1 + drone.level; // Level 1: 2 enemies, Level 2: 3 enemies, Level 3: 4 enemies
 
     const hitEnemies: Enemy[] = [primaryTarget];
@@ -1584,28 +2009,40 @@ export class GameEngine {
       p.trail.unshift({ x: p.x, y: p.y });
       if (p.trail.length > (p.weaponType === 'RAILGUN' ? 10 : 5)) p.trail.pop();
 
-      // Despawn projectiles when exiting the play area to prevent bullet clutter
-      const pMargin = 40;
-      if (
-        p.life <= 0 ||
-        p.x < -pMargin ||
-        p.x > CANVAS_WIDTH + pMargin ||
-        p.y < -pMargin ||
-        p.y > CANVAS_HEIGHT + pMargin
-      ) {
+      // Despawn projectiles when life expires or when far outside active camera view
+      const distFromCam = Math.hypot(p.x - this.camera.x, p.y - this.camera.y);
+      if (p.life <= 0 || distFromCam > 1800) {
         this.projectiles.splice(i, 1);
         continue;
       }
 
-      // Check collision with player (Enemy projectiles)
+      // Check collision with player & escort drones (Enemy projectiles)
       if (p.isEnemy) {
-        const dist = Math.hypot(p.x - this.player.x, p.y - this.player.y);
-        if (dist < 18 + p.radius && this.player.invulnerableTimer <= 0) {
+        let projectileHit = false;
+
+        // Check collision with player
+        const distToPlayer = Math.hypot(p.x - this.player.x, p.y - this.player.y);
+        if (distToPlayer < 18 + p.radius && this.player.invulnerableTimer <= 0) {
           this.hitPlayer(p.damage);
           this.spawnSparks(p.x, p.y, p.color, 6);
           this.projectiles.splice(i, 1);
           continue;
         }
+
+        // Check collision with autonomous escort drones
+        for (let d = this.player.drones.length - 1; d >= 0; d--) {
+          const drone = this.player.drones[d];
+          const distToDrone = Math.hypot(p.x - drone.x, p.y - drone.y);
+          if (distToDrone < 12 + p.radius) {
+            this.hitDrone(drone, p.damage);
+            this.spawnSparks(p.x, p.y, p.color, 6);
+            this.projectiles.splice(i, 1);
+            projectileHit = true;
+            break;
+          }
+        }
+
+        if (projectileHit) continue;
       } else {
         // Check collision with enemies (Player & Drone projectiles)
         for (let j = this.enemies.length - 1; j >= 0; j--) {
@@ -1613,6 +2050,64 @@ export class GameEngine {
           const dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
           if (dist < enemy.radius + p.radius) {
             const impactAngle = Math.atan2(p.vy, p.vx);
+
+            // 0. Check Frontal Energy Bulwark Block on Shield-Bearers
+            if (enemy.type === 'SHIELD_BEARER' && enemy.frontalShieldActive !== false) {
+              const hitAngle = Math.atan2(p.y - enemy.y, p.x - enemy.x);
+              let angleDiff = Math.abs(hitAngle - enemy.angle);
+              while (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+              const shieldHalfArc = (enemy.frontalShieldArc || 2.4) / 2;
+              if (angleDiff <= shieldHalfArc) {
+                // Projectile hits the frontal energy bulwark
+                enemy.frontalShieldHp = (enemy.frontalShieldHp || 120) - p.damage;
+                enemy.frontalShieldFlash = 0.22;
+                enemy.shieldFlashTimer = 0.2;
+
+                if (enemy.frontalShieldHp <= 0) {
+                  // Catastrophic Bulwark Overload / Shield Shatter
+                  this.shatterEnemyBulwarkShield(enemy, hitAngle);
+                  this.damageEnemy(enemy, p.damage * 0.5, p.color);
+                } else if (p.weaponType === 'RAILGUN') {
+                  // Railgun sabots overcharge and pierce through with 40% damage
+                  this.addFloatingText(p.x, p.y - 12, 'SHIELD PIERCED', '#10B981');
+                  this.damageEnemy(enemy, p.damage * 0.4, '#10B981');
+                  this.spawnKineticHitSpatter(p.x, p.y, hitAngle, '#10B981', 8);
+                } else {
+                  // Standard munitions are deflected
+                  this.addFloatingText(p.x, p.y - 12, 'BLOCKED', '#38BDF8');
+                  this.spawnSparks(p.x, p.y, '#38BDF8', 7);
+                  this.spawnKineticHitSpatter(p.x, p.y, hitAngle, '#38BDF8', 6);
+                  this.shockwaves.push({
+                    x: p.x,
+                    y: p.y,
+                    radius: 3,
+                    maxRadius: 18,
+                    color: '#38BDF8',
+                    alpha: 0.85,
+                    life: 0.12,
+                    maxLife: 0.12,
+                  });
+                  audioManager.playPositionalHit(p.x, p.y, true, this.player.x, this.player.y);
+                  this.triggerScreenShake(0.6);
+
+                  p.piercing--;
+                  if (p.piercing <= 0) {
+                    this.projectiles.splice(i, 1);
+                    break;
+                  }
+                  continue;
+                }
+              } else {
+                // Outflanked! Projectile strikes vulnerable rear thermal radiator
+                p.damage *= 1.75;
+                this.addFloatingText(enemy.x + (Math.random() - 0.5) * 16, enemy.y - 16, 'CRITICAL HIT!', '#F97316');
+                enemy.frontalShieldHp = (enemy.frontalShieldHp || 120) - p.damage * 0.65;
+                if (enemy.frontalShieldHp <= 0 && enemy.frontalShieldActive !== false) {
+                  this.shatterEnemyBulwarkShield(enemy, hitAngle);
+                }
+              }
+            }
 
             // 1. Kinetic pushback impulse (armor stagger physics)
             const massFactor = enemy.type === 'TITAN_BOSS' ? 0.08 : enemy.type === 'BOMBER' ? 0.35 : 0.85;
@@ -1651,25 +2146,27 @@ export class GameEngine {
             // 6. Kinetic armor impact sound
             audioManager.playKineticImpact(p.x, p.y, p.weaponType === 'RAILGUN', this.player.x, this.player.y);
 
-            // Explosive area-of-effect for seeking missiles
+            // Explosive area-of-effect for seeking missiles & guided micro-torpedoes
             if (p.isMissile) {
+              const blastColor = p.color || '#EC4899';
               this.shockwaves.push({
                 x: p.x,
                 y: p.y,
-                radius: 12,
-                maxRadius: 75,
-                color: '#EC4899',
+                radius: 10,
+                maxRadius: p.weaponType === 'BLASTER' ? 55 : 75,
+                color: blastColor,
                 alpha: 0.9,
-                life: 0.28,
-                maxLife: 0.28,
+                life: 0.25,
+                maxLife: 0.25,
               });
-              this.triggerScreenShake(4.0);
+              this.triggerScreenShake(p.weaponType === 'BLASTER' ? 2.5 : 4.0);
 
               // Damage surrounding hostiles in blast radius
+              const blastRadius = p.weaponType === 'BLASTER' ? 60 : 80;
               for (const splash of this.enemies) {
-                if (splash.id !== enemy.id && Math.hypot(splash.x - p.x, splash.y - p.y) < 80) {
-                  this.damageEnemy(splash, p.damage * 0.65, '#EC4899');
-                  this.spawnSparks(splash.x, splash.y, '#EC4899', 5);
+                if (splash.id !== enemy.id && Math.hypot(splash.x - p.x, splash.y - p.y) < blastRadius) {
+                  this.damageEnemy(splash, p.damage * 0.65, blastColor);
+                  this.spawnSparks(splash.x, splash.y, blastColor, 5);
                 }
               }
             }
@@ -1686,8 +2183,49 @@ export class GameEngine {
   }
 
   public damageEnemy(enemy: Enemy, damage: number, hitColor: string = '#FFFFFF', impulseX: number = 0, impulseY: number = 0) {
-    enemy.hp -= damage;
-    enemy.hitFlashTimer = 0.08;
+    let effectiveDmg = damage;
+
+    // Active Shield Absorption
+    if (enemy.shield && enemy.shield > 0) {
+      enemy.shieldFlashTimer = 0.15;
+      if (enemy.shield >= effectiveDmg) {
+        enemy.shield -= effectiveDmg;
+        this.addFloatingText(
+          enemy.x + (Math.random() - 0.5) * 16,
+          enemy.y - 14,
+          `DEFLECT ${Math.round(effectiveDmg)}`,
+          '#38BDF8'
+        );
+        this.spawnSparks(enemy.x, enemy.y, '#38BDF8', 4);
+        effectiveDmg = 0;
+      } else {
+        effectiveDmg -= enemy.shield;
+        this.addFloatingText(enemy.x, enemy.y - 18, 'SHIELD BROKEN', '#38BDF8');
+        this.shockwaves.push({
+          x: enemy.x,
+          y: enemy.y,
+          radius: enemy.radius,
+          maxRadius: enemy.radius + 20,
+          color: '#38BDF8',
+          alpha: 0.8,
+          life: 0.15,
+          maxLife: 0.15,
+        });
+        enemy.shield = 0;
+      }
+    }
+
+    if (effectiveDmg > 0) {
+      enemy.hp -= effectiveDmg;
+      enemy.hitFlashTimer = 0.08;
+
+      this.addFloatingText(
+        enemy.x + (Math.random() - 0.5) * 16,
+        enemy.y - 12,
+        Math.round(effectiveDmg).toString(),
+        hitColor
+      );
+    }
     
     // Physical impulse momentum transfer
     if (impulseX !== 0 || impulseY !== 0) {
@@ -1696,19 +2234,105 @@ export class GameEngine {
       enemy.vy += impulseY * massFactor;
     }
 
-    this.addFloatingText(
-      enemy.x + (Math.random() - 0.5) * 16,
-      enemy.y - 12,
-      Math.round(damage).toString(),
-      hitColor
-    );
-
     if (enemy.hp <= 0) {
       this.killEnemy(enemy);
     }
   }
 
+  private shatterEnemyBulwarkShield(enemy: Enemy, impactAngle?: number) {
+    if (enemy.frontalShieldActive === false) return;
+    enemy.frontalShieldActive = false;
+    enemy.frontalShieldHp = 0;
+    enemy.hitFlashTimer = 0.28;
+
+    const angle = impactAngle !== undefined ? impactAngle : enemy.angle;
+
+    // 1. Audio Cue - Resonant crystalline shield shatter
+    audioManager.playShieldShatter(enemy.x, enemy.y, this.player.x, this.player.y);
+
+    // 2. Heavy tactile screen shake
+    this.triggerScreenShake(4.5);
+
+    // 3. Floating Combat Text Banner
+    this.addFloatingText(enemy.x, enemy.y - 20, 'SHIELD SHATTERED!', '#38BDF8');
+
+    // 4. Expanding double hardlight shockwaves
+    this.shockwaves.push({
+      x: enemy.x,
+      y: enemy.y,
+      radius: enemy.radius + 6,
+      maxRadius: 70,
+      color: '#38BDF8',
+      alpha: 1.0,
+      life: 0.28,
+      maxLife: 0.28,
+    });
+    this.shockwaves.push({
+      x: enemy.x,
+      y: enemy.y,
+      radius: 4,
+      maxRadius: 45,
+      color: '#FFFFFF',
+      alpha: 0.9,
+      life: 0.18,
+      maxLife: 0.18,
+    });
+
+    // 5. High-Luminance Flash Core
+    this.particles.push({
+      x: enemy.x,
+      y: enemy.y,
+      vx: 0,
+      vy: 0,
+      size: 32,
+      color: '#38BDF8',
+      alpha: 1.0,
+      life: 0.2,
+      maxLife: 0.2,
+      decay: 5.0,
+      shape: 'FLASH',
+    });
+
+    // 6. Hardlight Shard Explosion Particles (Angular faceted glass crystals)
+    const shardCount = 18;
+    for (let s = 0; s < shardCount; s++) {
+      const arcSpread = (Math.random() - 0.5) * (enemy.frontalShieldArc || 2.4);
+      const shardAngle = angle + arcSpread;
+      const speed = Math.random() * 11 + 6;
+      const color = s % 3 === 0 ? '#FFFFFF' : s % 3 === 1 ? '#38BDF8' : '#06B6D4';
+
+      this.particles.push({
+        x: enemy.x + Math.cos(shardAngle) * (enemy.radius + 8),
+        y: enemy.y + Math.sin(shardAngle) * (enemy.radius + 8),
+        vx: Math.cos(shardAngle) * speed + enemy.vx * 0.3,
+        vy: Math.sin(shardAngle) * speed + enemy.vy * 0.3,
+        size: Math.random() * 4.5 + 2.5,
+        color,
+        alpha: 1.0,
+        life: Math.random() * 0.45 + 0.3,
+        maxLife: Math.random() * 0.45 + 0.3,
+        decay: 1.8,
+        shape: 'SHARD',
+        drag: 0.92,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 25,
+      });
+    }
+
+    // 7. Electric arc ionization sparks
+    this.spawnSparks(enemy.x, enemy.y, '#38BDF8', 14);
+
+    // 8. Stagger physical impulse
+    const knockback = 5.0;
+    enemy.vx += Math.cos(angle) * knockback;
+    enemy.vy += Math.sin(angle) * knockback;
+  }
+
   private killEnemy(enemy: Enemy) {
+    if (enemy.type === 'SHIELD_BEARER' && enemy.frontalShieldActive !== false) {
+      this.shatterEnemyBulwarkShield(enemy);
+    }
+
     const idx = this.enemies.findIndex((e) => e.id === enemy.id);
     if (idx !== -1) {
       this.enemies.splice(idx, 1);
@@ -1921,108 +2545,314 @@ export class GameEngine {
       if (enemy.hitFlashTimer > 0) {
         enemy.hitFlashTimer -= dt;
       }
+      if (enemy.shieldFlashTimer && enemy.shieldFlashTimer > 0) {
+        enemy.shieldFlashTimer -= dt;
+      }
+      if (enemy.frontalShieldFlash && enemy.frontalShieldFlash > 0) {
+        enemy.frontalShieldFlash -= dt;
+      }
 
       const distToPlayer = Math.hypot(p.x - enemy.x, p.y - enemy.y);
       const angleToPlayer = Math.atan2(p.y - enemy.y, p.x - enemy.x);
 
-      // AI Behaviors by Enemy Archetype
-      if (enemy.type === 'SWARMER') {
-        // Relentless pursuit
-        enemy.vx = Math.cos(angleToPlayer) * enemy.speed;
-        enemy.vy = Math.sin(angleToPlayer) * enemy.speed;
-        enemy.angle = angleToPlayer;
-      } else if (enemy.type === 'SCOUT') {
-        // Swoops in, fires, circles around
-        enemy.aiTimer += dt;
-        const orbitDist = 280;
-        if (distToPlayer > orbitDist) {
-          enemy.vx += Math.cos(angleToPlayer) * 0.4;
-          enemy.vy += Math.sin(angleToPlayer) * 0.4;
-        } else {
-          // Circle tangentially
-          const tangent = angleToPlayer + Math.PI / 2;
-          enemy.vx += Math.cos(tangent) * 0.5;
-          enemy.vy += Math.sin(tangent) * 0.5;
-        }
-        enemy.vx *= 0.96;
-        enemy.vy *= 0.96;
-        enemy.angle = angleToPlayer;
+      // --- Advanced Tactical AI: Projectile Threat Detection & Evasion Thrusters ---
+      if (enemy.dodgeCooldown > 0) {
+        enemy.dodgeCooldown -= dt;
+      }
 
-        // Scout weapon firing
+      if (enemy.dodgeTimer > 0) {
+        enemy.dodgeTimer -= dt;
+        // Apply active tactical dodge burn
+        enemy.vx += enemy.evasionVector.x * dt * 45;
+        enemy.vy += enemy.evasionVector.y * dt * 45;
+      } else if (enemy.dodgeCooldown <= 0 && (enemy.type === 'SCOUT' || enemy.type === 'SWARMER' || enemy.type === 'BOMBER' || enemy.type === 'INTERCEPTOR')) {
+        // Detect incoming player projectiles within proximity cone (180px)
+        let incomingThreat: Projectile | null = null;
+        for (let pj = 0; pj < this.projectiles.length; pj++) {
+          const prj = this.projectiles[pj];
+          if (prj.isEnemy) continue;
+          const pDist = Math.hypot(prj.x - enemy.x, prj.y - enemy.y);
+          if (pDist < 160) {
+            // Check if projectile velocity is heading directly towards enemy
+            const pAng = Math.atan2(prj.vy, prj.vx);
+            const toEnemyAng = Math.atan2(enemy.y - prj.y, enemy.x - prj.x);
+            let diffAng = Math.abs(pAng - toEnemyAng);
+            while (diffAng > Math.PI) diffAng = Math.PI * 2 - diffAng;
+            if (diffAng < 0.6) {
+              incomingThreat = prj;
+              break;
+            }
+          }
+        }
+
+        if (incomingThreat) {
+          // Perform emergency lateral break burn
+          const evadeDir = Math.random() > 0.5 ? 1 : -1;
+          const threatAngle = Math.atan2(incomingThreat.vy, incomingThreat.vx);
+          const lateralAngle = threatAngle + (Math.PI / 2) * evadeDir;
+          enemy.evasionVector = {
+            x: Math.cos(lateralAngle),
+            y: Math.sin(lateralAngle),
+          };
+          enemy.dodgeTimer = 0.28;
+          enemy.dodgeCooldown = enemy.type === 'INTERCEPTOR' ? 1.8 : enemy.type === 'SCOUT' ? 2.4 : 3.8;
+          // Spawn thruster burst particles
+          this.spawnSparks(enemy.x, enemy.y, '#38BDF8', 4);
+        }
+      }
+
+      // Check if low HP retreat behavior should trigger
+      if (enemy.hp < enemy.maxHp * 0.35 && (enemy.type === 'SCOUT' || enemy.type === 'BOMBER' || enemy.type === 'INTERCEPTOR')) {
+        enemy.isRetreating = true;
+      }
+
+      // Tactical Lead Targeting (predict where player will be based on player velocity)
+      const leadFactor = Math.min(1.2, distToPlayer / 450);
+      const predictedPlayerX = p.x + p.vx * leadFactor * 12;
+      const predictedPlayerY = p.y + p.vy * leadFactor * 12;
+      const leadAngleToPlayer = Math.atan2(predictedPlayerY - enemy.y, predictedPlayerX - enemy.x);
+
+      // AI Behaviors by Enemy Archetype
+      if (enemy.type === 'INTERCEPTOR') {
+        // High-g Flanking Interceptor: Actively out-maneuvers to get behind the player's engines
+        if (enemy.flankSide === undefined) {
+          enemy.flankSide = i % 2 === 0 ? 1 : -1;
+        }
+
+        const rearRadius = 180;
+        const playerRearAngle = p.angle + Math.PI;
+        const flankTargetAngle = playerRearAngle + enemy.flankSide * 0.45;
+        const flankX = p.x + Math.cos(flankTargetAngle) * rearRadius;
+        const flankY = p.y + Math.sin(flankTargetAngle) * rearRadius;
+
+        const distToFlankPocket = Math.hypot(flankX - enemy.x, flankY - enemy.y);
+        const angleToPocket = Math.atan2(flankY - enemy.y, flankX - enemy.x);
+
+        // Accelerated burn towards player's blind rear quadrant
+        const thrust = enemy.speed * (distToFlankPocket > 100 ? 0.46 : 0.28);
+        enemy.vx += Math.cos(angleToPocket) * thrust;
+        enemy.vy += Math.sin(angleToPocket) * thrust;
+        enemy.vx *= 0.94;
+        enemy.vy *= 0.94;
+
+        // Turn nose towards player rear / predicted position
+        let diff = leadAngleToPlayer - enemy.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        enemy.angle += diff * Math.min(1.0, dt * 9.5);
+
+        // Firing: High-rate twin plasma needles when situated in player's rear arc
         enemy.fireTimer += dt;
-        if (enemy.fireTimer >= enemy.fireInterval) {
+        const playerToEnemyAngle = Math.atan2(enemy.y - p.y, enemy.x - p.x);
+        let playerRearDiff = Math.abs(playerToEnemyAngle - playerRearAngle);
+        while (playerRearDiff > Math.PI) playerRearDiff = Math.PI * 2 - playerRearDiff;
+
+        if (enemy.fireTimer >= enemy.fireInterval && distToPlayer < 550 && Math.abs(diff) < 0.45) {
           enemy.fireTimer = 0;
-          this.fireEnemyProjectile(enemy.x, enemy.y, angleToPlayer, 10, 12, '#F43F5E', 3.5, 'ENEMY_SCOUT');
+          this.fireEnemyProjectile(enemy.x, enemy.y, enemy.angle - 0.08, 14, 11, '#06B6D4', 3.8, 'ENEMY_SCOUT');
+          this.fireEnemyProjectile(enemy.x, enemy.y, enemy.angle + 0.08, 14, 11, '#06B6D4', 3.8, 'ENEMY_SCOUT');
+          audioManager.playPositionalLaser('PRIMARY', enemy.x, enemy.y, p.x, p.y);
+        }
+      } else if (enemy.type === 'SHIELD_BEARER') {
+        // Heavy Phalanx Shield-Bearer: Maintains frontal energy bulwark locked onto player
+        const desiredDist = 220;
+        let moveAngle = angleToPlayer;
+
+        if (distToPlayer < desiredDist - 30) {
+          moveAngle = angleToPlayer + Math.PI; // Back up slightly if rammed
+        } else if (distToPlayer > desiredDist + 60) {
+          moveAngle = angleToPlayer; // Advance to screen for allies
+        } else {
+          // Slow steady strafe while holding shield wall
+          moveAngle = angleToPlayer + (Math.PI / 2) * 0.3 * (i % 2 === 0 ? 1 : -1);
+        }
+
+        enemy.vx += Math.cos(moveAngle) * 0.26;
+        enemy.vy += Math.sin(moveAngle) * 0.26;
+        enemy.vx *= 0.92;
+        enemy.vy *= 0.92;
+
+        // Frontal shield tracking: Firmly locks angle directly facing player
+        let diff = angleToPlayer - enemy.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        enemy.angle += diff * Math.min(1.0, dt * 6.5);
+
+        // Heavy forward concussive cannon fire through shield port
+        enemy.fireTimer += dt;
+        if (enemy.fireTimer >= enemy.fireInterval && distToPlayer < 650 && Math.abs(diff) < 0.35) {
+          enemy.fireTimer = 0;
+          this.fireEnemyProjectile(enemy.x, enemy.y, enemy.angle, 10, 20, '#3B82F6', 5.0, 'ENEMY_SCOUT');
+          audioManager.playPositionalLaser('PRIMARY', enemy.x, enemy.y, p.x, p.y);
+        }
+      } else if (enemy.type === 'SWARMER') {
+        // High-agility kinetic interceptor: Flanks player rather than dead-on rush
+        const flankOffset = Math.sin(Date.now() * 0.003 + i) * 0.65;
+        const targetAng = angleToPlayer + flankOffset;
+        
+        // Turn-rate limited rotation
+        let diff = targetAng - enemy.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        enemy.angle += diff * Math.min(1.0, dt * 7.5);
+
+        // Forward main thruster acceleration
+        const thrust = enemy.speed * 0.38;
+        enemy.vx += Math.cos(enemy.angle) * thrust;
+        enemy.vy += Math.sin(enemy.angle) * thrust;
+        enemy.vx *= 0.93;
+        enemy.vy *= 0.93;
+      } else if (enemy.type === 'SCOUT') {
+        // High-agility kinetic interceptor: Flanks player rather than dead-on rush
+        const flankOffset = Math.sin(Date.now() * 0.003 + i) * 0.65;
+        const targetAng = angleToPlayer + flankOffset;
+        
+        // Turn-rate limited rotation
+        let diff = targetAng - enemy.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        enemy.angle += diff * Math.min(1.0, dt * 7.5);
+
+        // Forward main thruster acceleration
+        const thrust = enemy.speed * 0.38;
+        enemy.vx += Math.cos(enemy.angle) * thrust;
+        enemy.vy += Math.sin(enemy.angle) * thrust;
+        enemy.vx *= 0.93;
+        enemy.vy *= 0.93;
+      } else if (enemy.type === 'SCOUT') {
+        // Advanced Dogfighter: Stalker, tactical retreat when wounded, predictive burst fire
+        enemy.aiTimer += dt;
+        const desiredDist = enemy.isRetreating ? 480 : 300;
+
+        let targetMoveAngle = angleToPlayer;
+        if (enemy.isRetreating) {
+          // Break engagement and gain distance
+          targetMoveAngle = angleToPlayer + Math.PI;
+        } else if (distToPlayer > desiredDist + 40) {
+          targetMoveAngle = angleToPlayer + Math.sin(enemy.aiTimer * 1.5) * 0.4;
+        } else if (distToPlayer < desiredDist - 40) {
+          targetMoveAngle = angleToPlayer + Math.PI + Math.sin(enemy.aiTimer * 1.5) * 0.5;
+        } else {
+          // Dynamic tactical strafe orbit
+          targetMoveAngle = angleToPlayer + (Math.PI / 2) * (i % 2 === 0 ? 1 : -1);
+        }
+
+        // Inertial flight acceleration
+        enemy.vx += Math.cos(targetMoveAngle) * 0.38;
+        enemy.vy += Math.sin(targetMoveAngle) * 0.38;
+        enemy.vx *= 0.95;
+        enemy.vy *= 0.95;
+
+        // Smooth nose turn towards predicted player intercept
+        let targetFaceAngle = leadAngleToPlayer;
+        let diff = targetFaceAngle - enemy.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        enemy.angle += diff * Math.min(1.0, dt * 8.0);
+
+        // Scout weapon firing with predictive lead
+        enemy.fireTimer += dt;
+        if (enemy.fireTimer >= enemy.fireInterval && Math.abs(diff) < 0.45 && distToPlayer < 650) {
+          enemy.fireTimer = 0;
+          this.fireEnemyProjectile(enemy.x, enemy.y, enemy.angle, 11, 14, '#FB923C', 4.0, 'ENEMY_SCOUT');
           audioManager.playPositionalLaser('PRIMARY', enemy.x, enemy.y, p.x, p.y);
         }
       } else if (enemy.type === 'CHARGER') {
-        // Charges forward in a straight high-speed line after telegraphing
+        // Armored Kinetic Rammer: Stalks, aligns, locks trajectory, fires booster burn
         if (enemy.isCharging) {
           // In active rocket charge
           enemy.aiTimer -= dt;
           if (enemy.aiTimer <= 0) {
             enemy.isCharging = false;
-            enemy.chargeCooldown = 2.5;
+            enemy.chargeCooldown = 2.8;
           }
         } else if (enemy.telegraphTimer > 0) {
-          // Telegraphed laser line charging
+          // Pre-ignition lock: Aligns rigidly onto lead vector before booster kicks
           enemy.telegraphTimer -= dt;
-          enemy.vx *= 0.85;
-          enemy.vy *= 0.85;
+          enemy.vx *= 0.82;
+          enemy.vy *= 0.82;
+          
+          let diff = leadAngleToPlayer - enemy.angle;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          enemy.angle += diff * 0.15;
+
           if (enemy.telegraphTimer <= 0) {
             enemy.isCharging = true;
-            enemy.aiTimer = 1.0;
-            enemy.vx = Math.cos(enemy.angle) * 16;
-            enemy.vy = Math.sin(enemy.angle) * 16;
+            enemy.aiTimer = 0.9;
+            enemy.vx = Math.cos(enemy.angle) * 17;
+            enemy.vy = Math.sin(enemy.angle) * 17;
+            this.triggerScreenShake(3);
             audioManager.playPositionalLaser('SPREAD', enemy.x, enemy.y, p.x, p.y);
           }
         } else {
-          // Stalk player
+          // Stalk player and prepare charge angle
           enemy.chargeCooldown -= dt;
-          enemy.angle = angleToPlayer;
-          enemy.vx += Math.cos(angleToPlayer) * 0.2;
-          enemy.vy += Math.sin(angleToPlayer) * 0.2;
-          enemy.vx *= 0.94;
-          enemy.vy *= 0.94;
+          
+          let diff = angleToPlayer - enemy.angle;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          enemy.angle += diff * Math.min(1.0, dt * 4.0);
 
-          if (enemy.chargeCooldown <= 0 && distToPlayer < 450) {
-            enemy.telegraphTimer = 0.8;
+          enemy.vx += Math.cos(enemy.angle) * 0.28;
+          enemy.vy += Math.sin(enemy.angle) * 0.28;
+          enemy.vx *= 0.93;
+          enemy.vy *= 0.93;
+
+          if (enemy.chargeCooldown <= 0 && distToPlayer < 480 && Math.abs(diff) < 0.5) {
+            enemy.telegraphTimer = 0.75;
           }
         }
       } else if (enemy.type === 'BOMBER') {
-        // Keeps distance and fires cluster plasma balls
-        const desiredDist = 380;
-        if (distToPlayer < desiredDist - 40) {
-          enemy.vx -= Math.cos(angleToPlayer) * 0.3;
-          enemy.vy -= Math.sin(angleToPlayer) * 0.3;
-        } else if (distToPlayer > desiredDist + 40) {
-          enemy.vx += Math.cos(angleToPlayer) * 0.3;
-          enemy.vy += Math.sin(angleToPlayer) * 0.3;
+        // Tactical Missile Cruiser: Maintains artillery range, retreats if rushed, fires cluster spread
+        const desiredDist = enemy.isRetreating ? 520 : 420;
+        let targetMoveAngle = angleToPlayer;
+
+        if (distToPlayer < desiredDist) {
+          // Backpedal and maintain standoff range
+          targetMoveAngle = angleToPlayer + Math.PI;
+        } else {
+          // Slowly adjust standoff firing arc
+          targetMoveAngle = angleToPlayer + (Math.PI / 2) * 0.4;
         }
-        enemy.vx *= 0.95;
-        enemy.vy *= 0.95;
-        enemy.angle = angleToPlayer;
+
+        enemy.vx += Math.cos(targetMoveAngle) * 0.25;
+        enemy.vy += Math.sin(targetMoveAngle) * 0.25;
+        enemy.vx *= 0.94;
+        enemy.vy *= 0.94;
+
+        // Smooth hull rotation towards lead target
+        let diff = leadAngleToPlayer - enemy.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        enemy.angle += diff * Math.min(1.0, dt * 4.5);
 
         enemy.fireTimer += dt;
-        if (enemy.fireTimer >= enemy.fireInterval) {
+        if (enemy.fireTimer >= enemy.fireInterval && distToPlayer < 800) {
           enemy.fireTimer = 0;
-          this.fireEnemyProjectile(enemy.x, enemy.y, angleToPlayer, 7, 25, '#EC4899', 5.5, 'ENEMY_BOMBER');
+          // Dual plasma cluster shot
+          this.fireEnemyProjectile(enemy.x, enemy.y, enemy.angle - 0.12, 7.5, 22, '#A855F7', 5.5, 'ENEMY_BOMBER');
+          this.fireEnemyProjectile(enemy.x, enemy.y, enemy.angle + 0.12, 7.5, 22, '#A855F7', 5.5, 'ENEMY_BOMBER');
           audioManager.playPositionalLaser('SPREAD', enemy.x, enemy.y, p.x, p.y);
         }
       } else if (enemy.type === 'TITAN_BOSS') {
-        // Massive boss with multi-barrel rotating turrets
+        // Massive Dreadnought Flagship
         enemy.angle += 0.015;
-        enemy.vx = Math.cos(angleToPlayer) * 1.8;
-        enemy.vy = Math.sin(angleToPlayer) * 1.8;
+        enemy.vx += Math.cos(angleToPlayer) * 0.12;
+        enemy.vy += Math.sin(angleToPlayer) * 0.12;
+        enemy.vx *= 0.96;
+        enemy.vy *= 0.96;
 
         enemy.fireTimer += dt;
         if (enemy.fireTimer >= enemy.fireInterval) {
           enemy.fireTimer = 0;
-          // 8-directional radial salvo
+          // 8-directional radial salvo plus targeted heavy rail pulse
           for (let b = 0; b < 8; b++) {
             const salvoAngle = enemy.angle + (b / 8) * Math.PI * 2;
             this.fireEnemyProjectile(enemy.x, enemy.y, salvoAngle, 8.5, 18, '#F59E0B', 4.5, 'ENEMY_BOSS');
           }
+          // Direct aimed slug towards player
+          this.fireEnemyProjectile(enemy.x, enemy.y, angleToPlayer, 12, 28, '#EF4444', 6.0, 'ENEMY_BOSS');
           audioManager.playPositionalLaser('RAILGUN', enemy.x, enemy.y, p.x, p.y);
         }
       }
@@ -2030,19 +2860,35 @@ export class GameEngine {
       enemy.x += enemy.vx;
       enemy.y += enemy.vy;
 
-      // Endless Space Matrix: Wrap enemies across space margins
-      const eMargin = 60;
-      if (enemy.x < -eMargin) enemy.x += CANVAS_WIDTH + eMargin * 2;
-      else if (enemy.x > CANVAS_WIDTH + eMargin) enemy.x -= CANVAS_WIDTH + eMargin * 2;
-
-      if (enemy.y < -eMargin) enemy.y += CANVAS_HEIGHT + eMargin * 2;
-      else if (enemy.y > CANVAS_HEIGHT + eMargin) enemy.y -= CANVAS_HEIGHT + eMargin * 2;
+      // Open continuous space: Reposition distant stragglers towards the flagship
+      if (distToPlayer > 2200 && enemy.type !== 'TITAN_BOSS') {
+        const wrapAng = Math.random() * Math.PI * 2;
+        enemy.x = p.x + Math.cos(wrapAng) * 1100;
+        enemy.y = p.y + Math.sin(wrapAng) * 1100;
+      }
 
       // Melee ram damage to player
       if (distToPlayer < enemy.radius + 18 && p.invulnerableTimer <= 0) {
         const ramDmg = enemy.type === 'CHARGER' ? 35 : enemy.type === 'TITAN_BOSS' ? 50 : 15;
         this.hitPlayer(ramDmg);
         this.damageEnemy(enemy, 30, '#FFFFFF');
+      }
+
+      // Melee ram damage to escort drones
+      for (let d = this.player.drones.length - 1; d >= 0; d--) {
+        const drone = this.player.drones[d];
+        const distToDrone = Math.hypot(drone.x - enemy.x, drone.y - enemy.y);
+        if (distToDrone < enemy.radius + 12) {
+          const ramDmg = enemy.type === 'CHARGER' ? 30 : enemy.type === 'TITAN_BOSS' ? 45 : 15;
+          this.hitDrone(drone, ramDmg);
+          this.damageEnemy(enemy, 20, '#FFFFFF');
+          // Elastic bounce impulse
+          const pushAngle = Math.atan2(drone.y - enemy.y, drone.x - enemy.x);
+          drone.vx += Math.cos(pushAngle) * 5;
+          drone.vy += Math.sin(pushAngle) * 5;
+          enemy.vx -= Math.cos(pushAngle) * 2.5;
+          enemy.vy -= Math.sin(pushAngle) * 2.5;
+        }
       }
     }
   }
@@ -2085,9 +2931,10 @@ export class GameEngine {
       return;
     }
 
-    // Regular wave enemy spawner
-    const spawnInterval = Math.max(0.6, 2.2 - this.wave * 0.15);
-    if (this.spawnTimer >= spawnInterval && this.enemies.length < 28) {
+    // Regular wave enemy spawner: Focused tactical encounter limit (max 10 high-quality combatants)
+    const maxEnemiesOnScreen = Math.min(10, 5 + this.wave);
+    const spawnInterval = Math.max(1.2, 3.2 - this.wave * 0.18);
+    if (this.spawnTimer >= spawnInterval && this.enemies.length < maxEnemiesOnScreen) {
       this.spawnTimer = 0;
       this.spawnRandomEnemy();
     }
@@ -2098,8 +2945,8 @@ export class GameEngine {
       this.wave++;
       this.bossDefeated = false;
       this.addFloatingText(
-        CANVAS_WIDTH / 2,
-        CANVAS_HEIGHT / 2 - 100,
+        this.camera.x,
+        this.camera.y - 100,
         `WAVE ${this.wave} INCOMING`,
         '#00F0FF'
       );
@@ -2112,97 +2959,130 @@ export class GameEngine {
     audioManager.playBossAlert();
     this.triggerScreenShake(8);
 
+    const bossHp = 2200 + this.wave * 550;
     const boss: Enemy = {
       id: `boss_titan_${Date.now()}`,
       type: 'TITAN_BOSS',
-      x: CANVAS_WIDTH / 2,
-      y: -80,
+      x: this.camera.x,
+      y: this.camera.y - CANVAS_HEIGHT * 0.55,
       vx: 0,
-      vy: 2,
+      vy: 1.5,
       angle: Math.PI / 2,
       targetAngle: Math.PI / 2,
-      hp: 1200 + this.wave * 300,
-      maxHp: 1200 + this.wave * 300,
-      radius: 55,
-      speed: 1.8,
-      scoreValue: 5000,
-      xpValue: 400,
+      hp: bossHp,
+      maxHp: bossHp,
+      shield: 450 + this.wave * 120,
+      maxShield: 450 + this.wave * 120,
+      radius: 58,
+      speed: 2.0,
+      scoreValue: 7500,
+      xpValue: 500,
       color: '#EF4444',
       fireTimer: 0,
-      fireInterval: 1.4,
+      fireInterval: 1.2,
       aiTimer: 0,
       chargeCooldown: 0,
       isCharging: false,
       telegraphTimer: 0,
       hitFlashTimer: 0,
+      dodgeCooldown: 4.0,
+      dodgeTimer: 0,
+      isRetreating: false,
+      evasionVector: { x: 0, y: 0 },
+      shieldFlashTimer: 0,
     };
     this.enemies.push(boss);
-    this.addFloatingText(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80, 'WARNING: TITAN FLAGSHIP DETECTED', '#EF4444');
+    this.addFloatingText(this.camera.x, this.camera.y - 80, 'WARNING: TITAN FLAGSHIP DETECTED', '#EF4444');
   }
 
   private spawnRandomEnemy() {
-    // Spawn offscreen border
-    let x = 0;
-    let y = 0;
-    const side = Math.floor(Math.random() * 4);
-    if (side === 0) {
-      x = Math.random() * CANVAS_WIDTH;
-      y = -40;
-    } else if (side === 1) {
-      x = CANVAS_WIDTH + 40;
-      y = Math.random() * CANVAS_HEIGHT;
-    } else if (side === 2) {
-      x = Math.random() * CANVAS_WIDTH;
-      y = CANVAS_HEIGHT + 40;
-    } else {
-      x = -40;
-      y = Math.random() * CANVAS_HEIGHT;
-    }
+    // Spawn offscreen perimeter relative to dynamic camera view
+    const spawnAngle = Math.random() * Math.PI * 2;
+    const spawnDist = Math.hypot(CANVAS_WIDTH, CANVAS_HEIGHT) * 0.55 + 100;
+    const x = this.camera.x + Math.cos(spawnAngle) * spawnDist;
+    const y = this.camera.y + Math.sin(spawnAngle) * spawnDist;
 
     const r = Math.random();
-    let type: EnemyType = 'SWARMER';
-    let hp = 30 + this.wave * 8;
-    let radius = 14;
-    let color = '#EF4444';
+    let type: EnemyType = 'SCOUT';
+    let hp = 110 + this.wave * 28;
+    let shield = 0;
+    let radius = 18;
+    let color = '#FB923C';
     let speed = 4.2;
-    let score = 50;
-    let xp = 20;
-    let fireInterval = 0;
+    let score = 150;
+    let xp = 45;
+    let fireInterval = 1.6;
+    let frontalShieldActive = false;
+    let frontalShieldArc = 2.4;
 
-    if (r < 0.4) {
-      type = 'SWARMER';
-      hp = 25 + this.wave * 6;
-      radius = 12;
-      color = '#F43F5E';
-      speed = 4.8;
-      score = 40;
-      xp = 15;
-    } else if (r < 0.7) {
+    if (r < 0.22) {
+      // Tactical Interceptor Scout (agile dogfighter with side-shields)
       type = 'SCOUT';
-      hp = 45 + this.wave * 10;
-      radius = 16;
+      hp = 95 + this.wave * 24;
+      shield = 35 + this.wave * 10;
+      radius = 17;
       color = '#FB923C';
-      speed = 3.8;
-      score = 80;
+      speed = 4.4;
+      score = 160;
+      xp = 45;
+      fireInterval = 1.4;
+    } else if (r < 0.44) {
+      // High-g Flanking Interceptor (pursues player rear quadrant, fires dual needles)
+      type = 'INTERCEPTOR';
+      hp = 85 + this.wave * 20;
+      shield = 30 + this.wave * 8;
+      radius = 16;
+      color = '#06B6D4';
+      speed = 5.4;
+      score = 190;
+      xp = 55;
+      fireInterval = 1.1;
+    } else if (r < 0.62) {
+      // Vanguard Skirmisher (high speed kinetic pursuer, dodges fire)
+      type = 'SWARMER';
+      hp = 75 + this.wave * 18;
+      shield = 20;
+      radius = 15;
+      color = '#F43F5E';
+      speed = 5.2;
+      score = 120;
       xp = 35;
+      fireInterval = 0;
+    } else if (r < 0.78) {
+      // Phalanx Shield-Bearer (impervious directional frontal energy bulwark)
+      type = 'SHIELD_BEARER';
+      hp = 180 + this.wave * 38;
+      shield = 0; // Shield is directional frontal barrier
+      radius = 22;
+      color = '#3B82F6';
+      speed = 2.6;
+      score = 260;
+      xp = 75;
       fireInterval = 1.8;
-    } else if (r < 0.9) {
+      frontalShieldActive = true;
+      frontalShieldArc = 2.4;
+    } else if (r < 0.90) {
+      // Heavy Armored Charger (armored prow, telegraphed ramming vector)
       type = 'CHARGER';
-      hp = 85 + this.wave * 18;
-      radius = 20;
-      color = '#E11D48';
-      speed = 2.5;
-      score = 140;
-      xp = 60;
-    } else {
-      type = 'BOMBER';
-      hp = 120 + this.wave * 25;
+      hp = 210 + this.wave * 45;
+      shield = 60 + this.wave * 15;
       radius = 24;
+      color = '#E11D48';
+      speed = 3.0;
+      score = 280;
+      xp = 80;
+      fireInterval = 0;
+    } else {
+      // Artillery Cruiser Bomber (long-range cluster fire, retreats when low)
+      type = 'BOMBER';
+      hp = 260 + this.wave * 55;
+      shield = 90 + this.wave * 20;
+      radius = 26;
       color = '#A855F7';
-      speed = 2.0;
-      score = 200;
-      xp = 90;
-      fireInterval = 2.4;
+      speed = 2.4;
+      score = 420;
+      xp = 120;
+      fireInterval = 2.2;
     }
 
     const enemy: Enemy = {
@@ -2216,6 +3096,8 @@ export class GameEngine {
       targetAngle: 0,
       hp,
       maxHp: hp,
+      shield,
+      maxShield: shield,
       radius,
       speed,
       scoreValue: score,
@@ -2224,10 +3106,19 @@ export class GameEngine {
       fireTimer: 0,
       fireInterval,
       aiTimer: 0,
-      chargeCooldown: 2.0,
+      chargeCooldown: 2.2,
       isCharging: false,
       telegraphTimer: 0,
       hitFlashTimer: 0,
+      dodgeCooldown: Math.random() * 2 + 1.5,
+      dodgeTimer: 0,
+      isRetreating: false,
+      evasionVector: { x: 0, y: 0 },
+      shieldFlashTimer: 0,
+      frontalShieldActive,
+      frontalShieldArc,
+      frontalShieldFlash: 0,
+      flankSide: Math.random() > 0.5 ? 1 : -1,
     };
 
     this.enemies.push(enemy);
@@ -2250,12 +3141,12 @@ export class GameEngine {
       drop.x += drop.vx;
       drop.y += drop.vy;
 
-      // Endless Space Matrix: Wrap drops across screen margins
-      if (drop.x < -30) drop.x += CANVAS_WIDTH + 60;
-      else if (drop.x > CANVAS_WIDTH + 30) drop.x -= CANVAS_WIDTH + 60;
-
-      if (drop.y < -30) drop.y += CANVAS_HEIGHT + 60;
-      else if (drop.y > CANVAS_HEIGHT + 30) drop.y -= CANVAS_HEIGHT + 60;
+      // Despawn drops when far outside active camera sector
+      const distFromCam = Math.hypot(drop.x - this.camera.x, drop.y - this.camera.y);
+      if (distFromCam > 2400) {
+        this.drops.splice(i, 1);
+        continue;
+      }
 
       // Tractor beam magnet pull
       const dist = Math.hypot(p.x - drop.x, p.y - drop.y);
@@ -2350,11 +3241,7 @@ export class GameEngine {
     let nearest: Enemy | null = null;
     let minDist = maxRadius;
     for (const enemy of this.enemies) {
-      let dx = Math.abs(enemy.x - x);
-      if (dx > CANVAS_WIDTH / 2) dx = CANVAS_WIDTH - dx;
-      let dy = Math.abs(enemy.y - y);
-      if (dy > CANVAS_HEIGHT / 2) dy = CANVAS_HEIGHT - dy;
-      const d = Math.hypot(dx, dy);
+      const d = Math.hypot(enemy.x - x, enemy.y - y);
       if (d < minDist) {
         minDist = d;
         nearest = enemy;
