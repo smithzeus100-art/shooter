@@ -1,0 +1,6 @@
+{
+  "name": "Aegis Fleet: Space Arcade",
+  "description": "High-octane twin-stick space arcade game with trailing escort drones, fluid physics, and roguelite tactical upgrades.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
