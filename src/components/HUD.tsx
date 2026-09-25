@@ -76,6 +76,22 @@ export const HUD: React.FC<HUDProps> = ({ engine, onPauseToggle, isPaused }) => 
               {dashRatio >= 1 ? 'DASH READY [SPACE/R-CLICK]' : 'CHARGING'}
             </span>
           </div>
+
+          {/* 3D Spatial Flight Instrumentation */}
+          <div className="flex items-center gap-3 text-[10px] font-mono mt-0.5">
+            <span className="flex items-center gap-1">
+              <span className="text-cyan-400 font-semibold">ALT:</span>
+              <span className="text-white">{(p.z || 0) >= 0 ? `+${Math.round(p.z || 0)}m` : `${Math.round(p.z || 0)}m`}</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-cyan-400 font-semibold">PITCH:</span>
+              <span className="text-white">{Math.round((p.pitch || 0) * (180 / Math.PI))}°</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-cyan-400 font-semibold">ROLL:</span>
+              <span className="text-white">{Math.round((p.roll || 0) * (180 / Math.PI))}°</span>
+            </span>
+          </div>
         </div>
 
         {/* Center: AI Telemetry & Wave Status */}
@@ -98,6 +114,11 @@ export const HUD: React.FC<HUDProps> = ({ engine, onPauseToggle, isPaused }) => 
             <span className="text-[11px] font-mono tracking-wider font-semibold uppercase">
               {engine.aiStatusText}
             </span>
+            {engine.isAiPilot && (
+              <span className="px-2 py-0.5 rounded bg-cyan-900/70 border border-cyan-500/40 text-[9px] font-mono font-bold text-cyan-200">
+                {engine.ai3dStrategy.replace(/_/g, ' ')}
+              </span>
+            )}
           </div>
 
           <div className="rounded-lg bg-slate-900/80 border border-slate-800 px-4 py-1.5 backdrop-blur-sm text-center">

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { GameEngine } from './game/engine';
 import { GameRenderer } from './game/renderer';
+import { Environment3D } from './game/environment3d';
 import { HUD } from './components/HUD';
 import { LevelUpModal } from './components/LevelUpModal';
 import { GameOverModal } from './components/GameOverModal';
@@ -10,8 +11,10 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from './game/constants';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const threeContainerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
   const rendererRef = useRef<GameRenderer | null>(null);
+  const env3dRef = useRef<Environment3D | null>(null);
 
   const [gameState, setGameState] = useState<GameState>('MENU');
   const [upgradeOptions, setUpgradeOptions] = useState<UpgradeOption[]>([]);
@@ -21,6 +24,11 @@ export default function App() {
   useEffect(() => {
     const engine = new GameEngine();
     const renderer = new GameRenderer();
+    const env3d = new Environment3D();
+
+    if (threeContainerRef.current) {
+      env3d.init(threeContainerRef.current, window.innerWidth, window.innerHeight);
+    }
 
     engine.onStateChange = (state) => {
       setGameState(state);
@@ -32,6 +40,7 @@ export default function App() {
 
     engineRef.current = engine;
     rendererRef.current = renderer;
+    env3dRef.current = env3d;
 
     // Window event listeners for controls
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -109,6 +118,7 @@ export default function App() {
       lastTime = currentTime;
 
       engine.update(dt);
+      env3d.update(engine, dt);
 
       const canvas = canvasRef.current;
       if (canvas) {
@@ -128,6 +138,7 @@ export default function App() {
 
     return () => {
       cancelAnimationFrame(animId);
+      env3d.dispose();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
@@ -140,13 +151,17 @@ export default function App() {
   // Handle dynamic canvas resizing to window container
   useEffect(() => {
     const handleResize = () => {
-      if (!canvasRef.current) return;
       const w = window.innerWidth;
       const h = window.innerHeight;
-      canvasRef.current.width = w;
-      canvasRef.current.height = h;
+      if (canvasRef.current) {
+        canvasRef.current.width = w;
+        canvasRef.current.height = h;
+      }
       if (engineRef.current) {
         engineRef.current.resize(w, h);
+      }
+      if (env3dRef.current) {
+        env3dRef.current.resize(w, h);
       }
     };
 
@@ -181,6 +196,9 @@ export default function App() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100">
+      {/* 3D Celestial Environment WebGL Viewport Layer */}
+      <div ref={threeContainerRef} className="absolute inset-0 block h-full w-full pointer-events-none" />
+
       {/* 60FPS High-DPI Gameplay Canvas Layer */}
       <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full cursor-crosshair" />
 

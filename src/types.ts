@@ -13,6 +13,10 @@ export interface DroneModule {
   vx: number;
   vy: number;
   bankAngle: number;
+  z: number;
+  vz: number;
+  targetZ: number;
+  pitch: number;
   angle: number;
   targetAngle: number;
   color: string;
@@ -50,14 +54,31 @@ export interface DroneModule {
 }
 
 export interface SynergyLink {
-  sourceX: number;
-  sourceY: number;
-  targetX: number;
-  targetY: number;
+  sourceId?: string;
+  targetId?: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  distance?: number;
+  maxDistance?: number;
   color: string;
-  intensity: number;
-  isNexusLink: boolean;
+  alpha: number;
+  pulsePhase: number;
+  sourceX?: number;
+  sourceY?: number;
+  targetX?: number;
+  targetY?: number;
+  intensity?: number;
+  isNexusLink?: boolean;
 }
+
+export type Ai3DStrategy =
+  | 'BOOM_AND_ZOOM'
+  | 'SPIRAL_CORKSCREW'
+  | 'ORBITAL_BRACKET'
+  | 'VERTICAL_DISENGAGE'
+  | 'DECK_LEVEL_INTERCEPT';
 
 export interface PlayerShip {
   x: number;
@@ -92,6 +113,15 @@ export interface PlayerShip {
   comboTimer: number;
   history: Array<{ x: number; y: number; angle: number }>;
   drones: DroneModule[];
+  // 3D Spatial Flight Dynamics
+  z: number;
+  vz: number;
+  roll: number;
+  pitch: number;
+  targetRoll: number;
+  targetPitch: number;
+  targetZ?: number;
+  barrelRollProgress: number;
   // Physical recoil, kickback & heat mechanics
   leftBarrelRecoil: number;
   rightBarrelRecoil: number;
@@ -129,6 +159,11 @@ export interface Enemy {
   isCharging: boolean;
   telegraphTimer: number;
   hitFlashTimer: number;
+  // 3D Spatial Flight Dynamics
+  z?: number;
+  vz?: number;
+  bankAngle?: number;
+  pitch?: number;
   // Advanced Survivability & Flight Physics
   dodgeCooldown: number;
   dodgeTimer: number;
